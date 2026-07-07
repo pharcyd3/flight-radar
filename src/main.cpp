@@ -6,18 +6,20 @@
 #include "aircraft.h"
 #include "opensky.h"
 #include "radar.h"
+#include "map.h"
 #include "provisioning.h"
 #include "settings.h"
+#include "encoder_debounce.h"
 
 // ── State ────────────────────────────────────────────────────────────────────
 static RadarDisplay         radar;
 static std::vector<Aircraft> aircraft;
+static EncoderDebouncer      zoomEncoder;
 
 static int           zoomIdx      = ZOOM_DEFAULT;
 static int           selectedAc   = -1;
 static unsigned long lastFetchMs  = 0;
 static unsigned long lastUpdateMs = 0;
-static long          lastEncVal   = 0;
 static bool          fetchInProgress = false;
 
 // Emergency alert cooldown — don't re-alert the same aircraft within 60 s
@@ -25,6 +27,26 @@ static char          lastAlertIcao[8] = "";
 static unsigned long lastAlertMs      = 0;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// Debug/setup convenience: accepts `SETCREDS:<client_id>:<client_secret>\n`
+// over USB serial so OpenSky OAuth2 credentials can be set without going
+// through the WiFi captive portal. Local USB access only — same trust level
+// as flashing the device.
+static void checkSerialCommands() {
+    if (!Serial.available()) return;
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (!line.startsWith("SETCREDS:")) return;
+
+    int sep = line.indexOf(':', 9);
+    if (sep < 0) {
+        Serial.println("[Serial] SETCREDS malformed, expected SETCREDS:<id>:<secret>");
+        return;
+    }
+    String cid = line.substring(9, sep);
+    String sec = line.substring(sep + 1);
+    setOpenSkyCredentials(cid.c_str(), sec.c_str());
+}
 
 static void checkEmergency() {
     if (!buzzOnEmergency()) return;
@@ -59,16 +81,13 @@ static void doFetch() {
     fetchInProgress = true;
     radar.draw(aircraft, homeLat(), homeLon(), r, selectedAc, lastUpdateMs, fetchInProgress);
 
-    bool ok = fetchAircraft(homeLat(), homeLon(), r, aircraft);
+    fetchAircraft(homeLat(), homeLon(), r, aircraft);
     lastUpdateMs = millis();
     fetchInProgress = false;
 
-    if (!ok && aircraft.empty()) {
-        radar.drawError("API error");
-        delay(2000);
-    } else {
-        radar.draw(aircraft, homeLat(), homeLon(), r, selectedAc, lastUpdateMs, fetchInProgress);
-    }
+    // Outcome (incl. failures) is surfaced by the poll icon colour and the
+    // tap-to-view status panel, so just redraw the radar either way.
+    radar.draw(aircraft, homeLat(), homeLon(), r, selectedAc, lastUpdateMs, fetchInProgress);
 
     checkEmergency();
 }
@@ -84,6 +103,7 @@ void setup() {
     M5Dial.Display.setBrightness(160);
 
     radar.begin();
+    mapLayer.begin();
     radar.drawBoot();
     delay(1500);
 
@@ -91,28 +111,31 @@ void setup() {
     loadSettings();
     doFetch();
 
-    lastFetchMs  = millis();
-    lastEncVal   = M5Dial.Encoder.read();
+    lastFetchMs = millis();
+    zoomEncoder.begin(ENC_STABLE_MS_ZOOM);
 }
 
 void loop() {
     M5Dial.update();
     checkResetCombo();
+    checkSerialCommands();
 
     if (settingsRequested()) {
-        runSettings();
-        // Redraw radar immediately after exiting settings
         float r = ZOOM_STEPS[zoomIdx];
+        runSettings(radar, aircraft, homeLat(), homeLon(), r, lastUpdateMs, fetchInProgress);
+        // The map cache is content-addressed by (lat,lon,radius), so a changed
+        // home location just means the next radar.draw()/ensure() loads or
+        // composes a different cache entry — no need to wipe anything here.
         radar.draw(aircraft, homeLat(), homeLon(), r, selectedAc, lastUpdateMs, fetchInProgress);
         return;
     }
 
     // ── Encoder: zoom in / out ───────────────────────────────────────────────
-    long enc = M5Dial.Encoder.read();
-    if (enc != lastEncVal) {
-        int delta  = (enc > lastEncVal) ? 1 : -1;
-        zoomIdx    = constrain(zoomIdx + delta, 0, ZOOM_COUNT - 1);
-        lastEncVal = enc;
+    // See encoder_debounce.h — this hardware needs more than a raw-tick ->
+    // detent conversion to behave as a reliable "one click = one step" input.
+    int zoomDelta;
+    if (zoomEncoder.poll(&zoomDelta)) {
+        zoomIdx    = constrain(zoomIdx + zoomDelta, 0, ZOOM_COUNT - 1);
         selectedAc = -1;
         doFetch();
         lastFetchMs = millis();
@@ -122,26 +145,39 @@ void loop() {
     // ── Touch: select / deselect aircraft ────────────────────────────────────
     auto touch = M5Dial.Touch.getDetail();
     if (touch.wasPressed()) {
-        float r  = ZOOM_STEPS[zoomIdx];
-        int   hit = radar.hitTest(touch.x, touch.y, aircraft, homeLat(), homeLon(), r);
-        selectedAc = (hit == selectedAc) ? -1 : hit;  // tap again to deselect
+        float r = ZOOM_STEPS[zoomIdx];
+        if (radar.hitPollIcon(touch.x, touch.y)) {
+            // Tap the poll icon to toggle the API status panel
+            radar.setStatusVisible(!radar.statusVisible());
+            selectedAc = -1;
+        } else {
+            radar.setStatusVisible(false);   // any other tap dismisses the panel
+            int hit = radar.hitTest(touch.x, touch.y, aircraft, homeLat(), homeLon(), r);
+            selectedAc = (hit == selectedAc) ? -1 : hit;  // tap again to deselect
+        }
         // Immediate redraw after touch so it feels responsive
         radar.draw(aircraft, homeLat(), homeLon(), r, selectedAc, lastUpdateMs, fetchInProgress);
     }
 
     // ── Auto-refresh ──────────────────────────────────────────────────────────
     unsigned long now = millis();
-    if (now - lastFetchMs >= REFRESH_INTERVAL_MS) {
+    if (now - lastFetchMs >= refreshIntervalMs()) {
         lastFetchMs = now;
         if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
         doFetch();
     }
 
-    // ── Periodic redraw (1 Hz — keeps the "X s ago" counter ticking) ─────────
+    // ── Periodic redraw (1 Hz — keeps the poll icon's countdown ticking) ─────
+    // Only the poll icon (and, if open, the status overlay) needs to animate
+    // every second; re-running a full draw() here would re-push the whole
+    // map sprite every tick for no reason, which is what was causing the
+    // rings/labels to visibly flicker. The aircraft detail panel has no live
+    // timer of its own, so it needs no periodic redraw at all — only a new
+    // fetch or touch event changes it, both already handled elsewhere.
     static unsigned long lastDrawMs = 0;
     if (now - lastDrawMs >= 1000UL) {
         lastDrawMs = now;
-        radar.draw(aircraft, homeLat(), homeLon(),
-                   ZOOM_STEPS[zoomIdx], selectedAc, lastUpdateMs, fetchInProgress);
+        radar.updatePollIcon(lastUpdateMs, fetchInProgress);
+        radar.updateStatusOverlay();
     }
 }
