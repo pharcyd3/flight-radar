@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "author": "FlightDial",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 80,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-gc9a01",
+      "id": "lcd",
+      "top": 0,
+      "left": 350,
+      "attrs": {}
+    }
+  ],
+  "connections": [
+    ["esp:GPIO4",  "lcd:DC",  "purple", []],
+    ["esp:GPIO5",  "lcd:SDA", "blue",   []],
+    ["esp:GPIO6",  "lcd:SCL", "orange", []],
+    ["esp:GPIO7",  "lcd:CS",  "yellow", []],
+    ["esp:GPIO8",  "lcd:RES", "green",  []],
+    ["esp:3V3",    "lcd:VCC", "red",    []],
+    ["esp:GND.1",  "lcd:GND", "black",  []],
+    ["esp:GPIO9",  "lcd:BL",  "white",  []]
+  ],
+  "serialMonitor": {
+    "display": "auto"
+  }
+}
