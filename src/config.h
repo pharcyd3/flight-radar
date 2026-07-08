@@ -5,7 +5,8 @@
 // Hold the encoder button for 3 seconds to reset and re-run setup.
 
 // ── Home location (radar centre) ─────────────────────────────────────────────
-// First-boot default only — central London. The actual home location is
+// First-boot default only (central London, deliberately low-precision — this
+// is never meant to be anyone's real address). The actual home location is
 // entered on the captive portal setup page (see provisioning.h: homeLat()/
 // homeLon()) and persisted to flash, so the device can be relocated without
 // reflashing.
