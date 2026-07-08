@@ -1,0 +1,59 @@
+site_name: FlightDial
+site_description: User guide for FlightDial — an M5Dial live aircraft radar
+site_url: https://pharcyd3.github.io/flight-radar/
+repo_url: https://github.com/pharcyd3/flight-radar
+repo_name: pharcyd3/flight-radar
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.action.edit
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - OpenSky API Setup: opensky-setup.md
+  - Using the Device: using-the-device.md
+  - Settings Reference: settings-reference.md
+  - Favourite Locations: favourite-locations.md
+  - Emergency Alerts: emergency-alerts.md
+  - Map & Caching: map-caching.md
+  - Troubleshooting: troubleshooting.md
+  - Building From Source: development.md
+  - Credits & License: credits.md
