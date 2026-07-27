@@ -1,8 +1,14 @@
 #pragma once
 
+// ── Product branding ─────────────────────────────────────────────────────────
+// Display name is "Frank's Flight Radar" (boot splash lives in radar.cpp).
+// SETUP_AP_SSID is the WiFi network the setup captive portal broadcasts.
+#define SETUP_AP_SSID  "Franks-Flight-Radar-Setup"
+#define PRODUCT_UA     "FranksFlightRadar/1.0 (ESP32 hobby project)"
+
 // WiFi and OpenSky credentials are configured on first boot via the captive
-// portal (connect to "FlightDial-Setup" AP, open 192.168.4.1 in a browser).
-// Hold the encoder button for 3 seconds to reset and re-run setup.
+// portal (connect to the "Franks-Flight-Radar-Setup" AP, open 192.168.4.1 in a
+// browser). Hold the encoder button for 3 seconds to reset and re-run setup.
 
 // ── Home location (radar centre) ─────────────────────────────────────────────
 // First-boot default only (central London, deliberately low-precision — this
@@ -53,18 +59,56 @@ static const unsigned long ENC_STABLE_MS_ZOOM     = 1000UL;
 static const unsigned long ENC_STABLE_MS_MENU     = 350UL;
 
 // ── Polling ───────────────────────────────────────────────────────────────────
-// OpenSky credit budget: 4000/day for a standard authenticated (OAuth2)
-// client, 8000/day only if the account is also an active ADS-B feeder,
-// 400/day anonymous. User-selectable via Settings > Refresh rate, but only
-// the 30 s option comfortably fits a standard authenticated budget for a
-// full day: 10 s = 8640 req/day (exceeds even the feeder tier — throttles
-// after ~11h), 20 s = 4320 req/day (still slightly over standard), 30 s =
-// 2880 req/day (safely under, all day). Anonymous access (no client
-// credentials) exhausts its 400/day in under 2h at any of these intervals —
-// set up an API client at opensky-network.org for a reliable feed.
-static const unsigned long REFRESH_OPTIONS_MS[]  = { 10000UL, 20000UL, 30000UL };
-static const int           REFRESH_OPTIONS_COUNT = 3;
-static const int           REFRESH_DEFAULT       = 2;   // 30 s — the only option safe all day
+// OpenSky daily budget: 4000 requests/day for a standard authenticated (OAuth2)
+// client, 400/day anonymous (no client credentials). The default "Auto" refresh
+// rate spreads whichever budget applies evenly across a full 24 h, so the feed
+// stays live all day without ever hitting the quota:
+//   authenticated: 86400 s / 4000 = 21.6 s  → poll every 22 s  (~3927 req/day)
+//   anonymous:     86400 s /  400 = 216  s  → poll every 240 s (~360 req/day)
+// The poll timer is measured from each fetch's *start* and a fetch itself blocks
+// ~1-2 s, so the realised rate is always at or under these figures. The
+// anonymous interval carries extra margin because exhausting the anonymous quota
+// earns a punishing (~24 h) lockout. Auto adapts live: adding credentials via
+// the setup portal switches it from the 240 s to the 22 s cadence immediately.
+//
+// The fixed 10/20/30 s options remain for manual override, but 10 s (8640/day)
+// and 20 s (4320/day) both exceed the authenticated budget and will throttle
+// before the day is out; only 30 s (2880/day) is safe all day on a fixed rate.
+static const int           REFRESH_AUTO         = 0;         // index 0 — adapts to credentials
+static const unsigned long REFRESH_AUTHED_MS    = 22000UL;   // 4000/day  → 21.6 s
+static const unsigned long REFRESH_ANON_MS      = 240000UL;  // 400/day   → 216 s (+ margin)
+static const unsigned long REFRESH_FIXED_MS[]   = { 10000UL, 20000UL, 30000UL };  // indices 1..3
+static const int           REFRESH_OPTION_COUNT = 4;         // Auto + 3 fixed
+static const int           REFRESH_DEFAULT       = REFRESH_AUTO;
+
+// ── Aircraft cap ──────────────────────────────────────────────────────────────
+// Upper bound on aircraft held/drawn per fetch. Bounds heap use for a busy area
+// (the 200 km box over UK airspace can return well over 100), and — crucially on
+// this no-PSRAM device — the result vector is reserve()d to this size once at
+// startup so it never reallocates mid-heap later. A growing/moving vector was
+// splitting the single large free region so no contiguous ~40 KB block remained
+// for the next TLS handshake, stalling the feed after a big response.
+static const int MAX_AIRCRAFT = 120;
+
+// ── Dead-reckoning interpolation ───────────────────────────────────────────────
+// Between polls (22 s apart on the authenticated cadence) a mark would otherwise
+// teleport to its next reported position. Instead we advance it along its own
+// heading at its reported ground speed on every redraw, so it glides. Two guards
+// keep it honest: ignore anything slower than a crawl (parked/taxiing GPS jitter
+// would just make stationary marks wander), and never extrapolate further than a
+// bounded window past the last fetch — a skipped poll must not fling a stale mark
+// across the screen.
+static const float INTERP_MIN_SPEED_MS = 5.0f;    // ~10 kts — below this, don't move
+static const float INTERP_MAX_S        = 120.0f;  // cap extrapolation at 2 min
+
+// ── Position trails ─────────────────────────────────────────────────────────────
+// Breadcrumb history for the *selected* aircraft: the last few reported positions,
+// drawn as a fading polyline. Recorded for every tracked aircraft (matched across
+// polls by icao24) so a trail is ready the instant one is selected. Stored in a
+// fixed static buffer sized MAX_AIRCRAFT × TRAIL_LEN — a compile-time RAM cost in
+// BSS, never a heap allocation, so it can't fragment the contiguous free region
+// the TLS handshake and PNG decoder depend on.
+static const int TRAIL_LEN = 8;
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 // Min-altitude filter thresholds, metres (Off, 1,000/5,000/10,000/20,000 ft).

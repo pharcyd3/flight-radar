@@ -3,6 +3,7 @@
 // LittleFS's include guard is already defined by the time it's processed.
 #include <LittleFS.h>
 #include "map.h"
+#include "config.h"
 
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -58,7 +59,7 @@ static bool fetchTileToFile(WiFiClientSecure& client, HTTPClient& http,
 
     http.begin(client, url);
     // OSM tile-usage policy requires an identifying User-Agent.
-    http.addHeader("User-Agent", "FlightDial/1.0 (ESP32 hobby project)");
+    http.addHeader("User-Agent", PRODUCT_UA);
     http.setTimeout(9000);
 
     int code = http.GET();
@@ -106,6 +107,11 @@ static bool fetchTileToFile(WiFiClientSecure& client, HTTPClient& http,
 // ── Compose / cache ───────────────────────────────────────────────────────────
 
 bool MapLayer::compose(float lat, float lon, float r) {
+    // Make sure the PNG decoder is allocated (it's freed between precache rounds
+    // to give OpenSky polls headroom). If it can't be re-primed on this heap the
+    // tiles can't be decoded, so bail — the radar falls back to a solid bg.
+    if (!ensureDecoder()) return false;
+
     double mpp;
     int    z = chooseZoom(lat, r, TARGET_PX, mpp);
 
@@ -167,17 +173,14 @@ bool MapLayer::compose(float lat, float lon, float r) {
 
     LittleFS.remove(TILE_TMP_PATH);
 
-    // The PNG decoder's ~44 KB scratch buffer is a single buffer shared by
-    // every LGFX-derived surface (see releasePngMemory()'s implementation —
-    // it's a file-scope static, not a per-sprite member), and pngle keeps it
-    // allocated indefinitely once first used to avoid re-paying a fragile
-    // ~44 KB allocation on every tile. That's fine for map composes, which
-    // are rare (only on zoom/location change) — but leaving it permanently
-    // resident competes with the OpenSky poll's TLS handshake (itself a
-    // sizeable allocation) for the exact same fragmented heap, every 10-30 s,
-    // which is far more frequent. Freeing it here trades a rare "recompose
-    // this tile set from scratch" cost for reliable, frequent OpenSky polls.
-    M5Dial.Display.releasePngMemory();
+    // NOTE: we deliberately do NOT release the PNG decoder here (nor in the
+    // OpenSky poll — see opensky.cpp). The decoder's scratch buffer is a single
+    // ~45 KB contiguous allocation that pngle keeps and reuses once created.
+    // On this no-PSRAM board the largest contiguous free block once WiFi/TLS
+    // are up is only ~31 KB, so if the buffer is ever freed it can NEVER be
+    // re-allocated — that was the "maps only load at one zoom" bug. It's
+    // allocated once at boot (begin() priming, while a 45 KB block still
+    // exists) and kept resident for the life of the program.
 
     Serial.printf("[Map] z=%d s=%.2f tiles ok=%d fail=%d heap=%u\n",
                   z, s, ok, fail, ESP.getFreeHeap());
@@ -277,8 +280,29 @@ void MapLayer::begin() {
 
     unsigned before = ESP.getFreeHeap();
     bool primed = _spr.drawPng(PRIME_PNG, sizeof(PRIME_PNG), 0, 0);
+    _decoderReady = primed;
     Serial.printf("[Map] png decoder priming: %s (heap %u -> %u)\n",
                   primed ? "ok" : "FAILED", before, ESP.getFreeHeap());
+}
+
+// (Re)allocate the pngle scratch buffer if it's been released. Priming decodes a
+// trivial 1x1 PNG, which forces the ~45 KB allocation. Runs from compose(),
+// which only happens when the loop is idle (no OpenSky TLS active), so the
+// contiguous block is available even though a poll couldn't spare it.
+bool MapLayer::ensureDecoder() {
+    if (_decoderReady) return true;
+    unsigned before = ESP.getFreeHeap();
+    _decoderReady = _spr.drawPng(PRIME_PNG, sizeof(PRIME_PNG), 0, 0);
+    Serial.printf("[Map] png decoder re-prime: %s (heap %u -> %u)\n",
+                  _decoderReady ? "ok" : "FAILED", before, ESP.getFreeHeap());
+    return _decoderReady;
+}
+
+void MapLayer::releaseDecoder() {
+    if (!_decoderReady) return;
+    M5Dial.Display.releasePngMemory();
+    _decoderReady = false;
+    Serial.printf("[Map] png decoder released, free heap %u\n", ESP.getFreeHeap());
 }
 
 void MapLayer::ensure(float lat, float lon, float r) {
@@ -309,6 +333,34 @@ void MapLayer::ensure(float lat, float lon, float r) {
     _curLat = lat; _curLon = lon; _curR = r;
 }
 
+bool MapLayer::beginScene(float lat, float lon, float r) {
+    if (!_ready) return false;
+
+    bool current = _haveMap &&
+                   fabsf(lat - _curLat) < 1e-6f &&
+                   fabsf(lon - _curLon) < 1e-6f &&
+                   fabsf(r   - _curR)   < 1e-3f;
+
+    if (!current) {
+        // Location/zoom changed (or no map yet): load from cache or compose.
+        ensure(lat, lon, r);
+    } else if (_sceneDirty) {
+        // Same view, but last frame drew aircraft/overlays into the sprite —
+        // reload the clean map underneath them. A cached .565 load is a straight
+        // buffer read (no network/compose), effectively instant.
+        loadCache(_curLat, _curLon, _curR);
+    }
+
+    _sceneDirty = false;
+    return _haveMap;
+}
+
+void MapLayer::pushScene() {
+    if (!_ready) return;
+    _spr.pushSprite(&M5Dial.Display, 0, 0);
+    _sceneDirty = true;   // overlays are now baked in — next frame must restore
+}
+
 bool MapLayer::blitTo() {
     static bool loggedOnce = false;
     if (!_ready || !_haveMap) {
@@ -323,14 +375,17 @@ bool MapLayer::blitTo() {
     return true;
 }
 
-void MapLayer::precache(float lat, float lon, float r) {
-    if (!_ready) return;
+bool MapLayer::precache(float lat, float lon, float r) {
+    if (!_ready) return false;
     File existing = LittleFS.open(cachePath(lat, lon, r), "r");
-    if (existing) { existing.close(); return; }   // already cached
+    if (existing) { existing.close(); return false; }   // already cached — no work
 
     if (compose(lat, lon, r)) saveCache(lat, lon, r);
     _haveMap = false;   // force the next ensure() to reload for the real view
     _curR    = -1.0f;
+    // We composed into the shared sprite and dropped the live-view state, so the
+    // caller should repaint the current view (now a fast cache hit) afterwards.
+    return true;
 }
 
 void MapLayer::invalidate() {

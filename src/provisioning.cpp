@@ -1,6 +1,7 @@
 #include "provisioning.h"
 #include "config.h"
 #include "map.h"
+#include "geolocate.h"
 #include <M5Dial.h>
 #include <WiFiManager.h>
 #include <Preferences.h>
@@ -32,16 +33,28 @@ void setOpenSkyCredentials(const char* clientId, const char* clientSecret) {
 static float _homeLat = DEFAULT_HOME_LAT;
 static float _homeLon = DEFAULT_HOME_LON;
 
+// Whether a home location has ever been explicitly chosen (manual coords, a
+// geocoded place, an IP auto-detect, or a favourite). Distinguishes "user is
+// deliberately in London" from "still on the first-boot default", so auto-detect
+// only kicks in when the location was genuinely never set.
+static bool _homeSet = false;
+
+// A place name typed into the portal, stashed here by the (offline, AP-mode)
+// save callback and resolved to coordinates once the device is back online.
+static char _pendingPlace[80] = "";
+
 float homeLat() { return _homeLat; }
 float homeLon() { return _homeLon; }
 
 void setHomeLocation(float lat, float lon) {
     _homeLat = lat;
     _homeLon = lon;
+    _homeSet = true;
     Preferences prefs;
     prefs.begin("flightdial", /*readOnly=*/false);
     prefs.putFloat("home_lat", _homeLat);
     prefs.putFloat("home_lon", _homeLon);
+    prefs.putBool("home_set", true);
     prefs.end();
 }
 
@@ -73,7 +86,7 @@ static void showSetupScreen() {
     d.drawString("Connect your phone to:", 120, 100);
 
     d.setTextColor(C_ORANGE, C_BG);
-    d.drawString("FlightDial-Setup", 120, 118);
+    d.drawString(SETUP_AP_SSID, 120, 118);
 
     d.setTextColor(C_GREY, C_BG);
     d.drawString("then open:", 120, 142);
@@ -89,6 +102,68 @@ static void showConnectingScreen() {
     d.drawString("Connecting...", 120, 120);
 }
 
+// One/two-line status screen shared by the geolocation flows.
+static void showGeoScreen(const char* line1, const char* line2 = nullptr) {
+    auto& d = M5Dial.Display;
+    d.fillScreen(C_BG);
+    d.setTextDatum(MC_DATUM);
+    d.setTextSize(1);
+    d.setTextColor(C_GREEN, C_BG);
+    d.drawString("LOCATION", 120, 96);
+    d.setTextColor(C_GREY, C_BG);
+    d.drawString(line1, 120, 120);
+    if (line2 && line2[0]) d.drawString(line2, 120, 138);
+}
+
+// After the portal closes and WiFi is back, turn whatever the user gave us into a
+// home location: an explicitly typed place name wins; otherwise, if home was
+// never set, fall back to IP auto-detect. No-op when neither applies (manual
+// coordinates were already saved). Blocking, but only runs during setup.
+static void resolvePendingLocation() {
+    float lat, lon;
+    char  place[80] = "";
+
+    if (_pendingPlace[0]) {
+        showGeoScreen("Finding place...");
+        if (geocodeCity(_pendingPlace, lat, lon, place, sizeof(place))) {
+            setHomeLocation(lat, lon);
+            showGeoScreen("Found:", place);
+        } else {
+            showGeoScreen("Place not found", "keeping location");
+        }
+        delay(1400);
+        _pendingPlace[0] = '\0';
+        return;
+    }
+
+    if (!_homeSet) {
+        showGeoScreen("Locating you...");
+        if (ipGeolocate(lat, lon, place, sizeof(place))) {
+            setHomeLocation(lat, lon);
+            showGeoScreen("Located:", place);
+            delay(1400);
+        }
+    }
+}
+
+// Settings-menu action: re-run IP auto-detect on demand (e.g. after moving).
+// Returns true if a new home was set. Assumes the device is online.
+bool runDetectLocation() {
+    float lat, lon;
+    char  place[80] = "";
+    if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+    showGeoScreen("Locating you...");
+    if (ipGeolocate(lat, lon, place, sizeof(place))) {
+        setHomeLocation(lat, lon);
+        showGeoScreen("Located:", place[0] ? place : "position set");
+        delay(1500);
+        return true;
+    }
+    showGeoScreen("Detect failed", "check WiFi");
+    delay(1500);
+    return false;
+}
+
 // ── Provisioning ──────────────────────────────────────────────────────────────
 
 void runProvisioning() {
@@ -99,6 +174,7 @@ void runProvisioning() {
     prefs.getString("os_secret", _osPass, sizeof(_osPass));
     _homeLat = prefs.getFloat("home_lat", DEFAULT_HOME_LAT);
     _homeLon = prefs.getFloat("home_lon", DEFAULT_HOME_LON);
+    _homeSet = prefs.getBool("home_set", false);
     for (int i = 0; i < FAV_COUNT; i++) {
         char key[16];
         snprintf(key, sizeof(key), "fav%d_name", i);
@@ -115,17 +191,25 @@ void runProvisioning() {
     WiFiManagerParameter osPassParam(
         "os_secret", "OpenSky client_secret (optional)", "", 63);
 
-    char latStr[16], lonStr[16];
-    snprintf(latStr, sizeof(latStr), "%.6f", _homeLat);
-    snprintf(lonStr, sizeof(lonStr), "%.6f", _homeLon);
+    // First boot (home never set): leave the coordinate fields blank so the user
+    // can just type a place name — or leave everything blank — and let the device
+    // locate itself. On a re-run they prefill with the current coordinates.
+    char latStr[16] = "", lonStr[16] = "";
+    if (_homeSet) {
+        snprintf(latStr, sizeof(latStr), "%.6f", _homeLat);
+        snprintf(lonStr, sizeof(lonStr), "%.6f", _homeLon);
+    }
+    WiFiManagerParameter placeParam(
+        "place", "Place name (e.g. Berlin) - or leave all blank to auto-detect", "", 48);
     WiFiManagerParameter homeLatParam(
-        "home_lat", "Home latitude (e.g. 51.5007)", latStr, 15);
+        "home_lat", "Home latitude (optional, overrides place)", latStr, 15);
     WiFiManagerParameter homeLonParam(
-        "home_lon", "Home longitude (e.g. -0.1246)", lonStr, 15);
+        "home_lon", "Home longitude (optional, overrides place)", lonStr, 15);
 
     WiFiManager wm;
     wm.addParameter(&osUserParam);
     wm.addParameter(&osPassParam);
+    wm.addParameter(&placeParam);
     wm.addParameter(&homeLatParam);
     wm.addParameter(&homeLonParam);
 
@@ -141,18 +225,30 @@ void runProvisioning() {
         prefs.putString("os_cid",    _osUser);
         prefs.putString("os_secret", _osPass);
 
-        float lat = atof(homeLatParam.getValue());
-        float lon = atof(homeLonParam.getValue());
-        bool valid = (lat >= -90.0f && lat <= 90.0f) &&
-                     (lon >= -180.0f && lon <= 180.0f) &&
-                     !(lat == 0.0f && lon == 0.0f);  // reject blank/unparsable input
-        if (valid) {
-            _homeLat = lat;
-            _homeLon = lon;
-            prefs.putFloat("home_lat", _homeLat);
-            prefs.putFloat("home_lon", _homeLon);
+        // A typed place name is an explicit choice, so it wins — stash it to
+        // geocode once we're back online (we're offline in the portal AP now).
+        // Otherwise use manually entered coordinates if they're valid.
+        const char* placeVal = placeParam.getValue();
+        if (placeVal[0]) {
+            strncpy(_pendingPlace, placeVal, sizeof(_pendingPlace) - 1);
+            _pendingPlace[sizeof(_pendingPlace) - 1] = '\0';
         } else {
-            Serial.println("[Provision] Invalid home lat/lon, keeping previous value");
+            _pendingPlace[0] = '\0';
+            float lat = atof(homeLatParam.getValue());
+            float lon = atof(homeLonParam.getValue());
+            bool valid = (lat >= -90.0f && lat <= 90.0f) &&
+                         (lon >= -180.0f && lon <= 180.0f) &&
+                         !(lat == 0.0f && lon == 0.0f);  // reject blank/unparsable input
+            if (valid) {
+                _homeLat = lat;
+                _homeLon = lon;
+                _homeSet = true;
+                prefs.putFloat("home_lat", _homeLat);
+                prefs.putFloat("home_lon", _homeLon);
+                prefs.putBool("home_set", true);
+            } else {
+                Serial.println("[Provision] No place and invalid coords — will auto-detect");
+            }
         }
     });
 
@@ -161,7 +257,7 @@ void runProvisioning() {
 
     showConnectingScreen();
 
-    bool connected = wm.autoConnect("FlightDial-Setup");
+    bool connected = wm.autoConnect(SETUP_AP_SSID);
     prefs.end();
 
     if (!connected) {
@@ -175,6 +271,10 @@ void runProvisioning() {
                   WiFi.localIP().toString().c_str(),
                   _osUser[0] ? _osUser : "(anonymous)",
                   _homeLat, _homeLon);
+
+    // Now that we're online, geocode any typed place / IP-auto-detect if the user
+    // didn't give explicit coordinates.
+    resolvePendingLocation();
 }
 
 void runLocationPortal() {
@@ -191,6 +291,8 @@ void runLocationPortal() {
     char latStr[16], lonStr[16];
     snprintf(latStr, sizeof(latStr), "%.6f", _homeLat);
     snprintf(lonStr, sizeof(lonStr), "%.6f", _homeLon);
+    WiFiManagerParameter placeParam(
+        "place", "Change to a place (e.g. Berlin) - overrides coords below", "", 48);
     WiFiManagerParameter homeLatParam(
         "home_lat", "Home latitude (e.g. 51.5007)", latStr, 15);
     WiFiManagerParameter homeLonParam(
@@ -223,6 +325,7 @@ void runLocationPortal() {
     WiFiManager wm;
     wm.addParameter(&osUserParam);
     wm.addParameter(&osPassParam);
+    wm.addParameter(&placeParam);
     wm.addParameter(&homeLatParam);
     wm.addParameter(&homeLonParam);
     for (int i = 0; i < FAV_COUNT; i++) {
@@ -245,18 +348,28 @@ void runLocationPortal() {
         prefs.putString("os_cid",    _osUser);
         prefs.putString("os_secret", _osPass);
 
-        float lat = atof(homeLatParam.getValue());
-        float lon = atof(homeLonParam.getValue());
-        bool valid = (lat >= -90.0f && lat <= 90.0f) &&
-                     (lon >= -180.0f && lon <= 180.0f) &&
-                     !(lat == 0.0f && lon == 0.0f);
-        if (valid) {
-            _homeLat = lat;
-            _homeLon = lon;
-            prefs.putFloat("home_lat", _homeLat);
-            prefs.putFloat("home_lon", _homeLon);
+        // Typed place name wins (resolved after reconnect); otherwise use coords.
+        const char* placeVal = placeParam.getValue();
+        if (placeVal[0]) {
+            strncpy(_pendingPlace, placeVal, sizeof(_pendingPlace) - 1);
+            _pendingPlace[sizeof(_pendingPlace) - 1] = '\0';
         } else {
-            Serial.println("[Provision] Invalid home lat/lon, keeping previous value");
+            _pendingPlace[0] = '\0';
+            float lat = atof(homeLatParam.getValue());
+            float lon = atof(homeLonParam.getValue());
+            bool valid = (lat >= -90.0f && lat <= 90.0f) &&
+                         (lon >= -180.0f && lon <= 180.0f) &&
+                         !(lat == 0.0f && lon == 0.0f);
+            if (valid) {
+                _homeLat = lat;
+                _homeLon = lon;
+                _homeSet = true;
+                prefs.putFloat("home_lat", _homeLat);
+                prefs.putFloat("home_lon", _homeLon);
+                prefs.putBool("home_set", true);
+            } else {
+                Serial.println("[Provision] Invalid home lat/lon, keeping previous value");
+            }
         }
 
         for (int i = 0; i < FAV_COUNT; i++) {
@@ -289,7 +402,7 @@ void runLocationPortal() {
     wm.setConfigPortalTimeout(180);  // 3 min before giving up and reconnecting
 
     showConnectingScreen();
-    wm.startConfigPortal("FlightDial-Setup");
+    wm.startConfigPortal(SETUP_AP_SSID);
     prefs.end();
 
     for (int i = 0; i < FAV_COUNT; i++) {
@@ -297,6 +410,15 @@ void runLocationPortal() {
         delete favLatParam[i];
         delete favLonParam[i];
     }
+
+    // The portal ran in AP mode — get back onto the home network before any
+    // online geocoding / map precaching below.
+    WiFi.mode(WIFI_STA);
+    WiFi.reconnect();
+    for (int t = 0; t < 40 && WiFi.status() != WL_CONNECTED; ++t) delay(250);
+
+    // Resolve a typed place name (or nothing) now that we're back online.
+    resolvePendingLocation();
 
     // Pre-cache each saved favourite's map at the default zoom radius so
     // switching to one via Settings > Saved Locations is instant instead of

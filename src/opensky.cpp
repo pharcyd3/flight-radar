@@ -1,3 +1,4 @@
+#include <LittleFS.h>   // before M5Dial.h — mirrors map.cpp's include-order note
 #include "opensky.h"
 #include "config.h"
 #include "provisioning.h"
@@ -111,6 +112,70 @@ static bool ensureToken() {
     return refreshToken();
 }
 
+// Reads the HTTP response body straight to a flash file using only a small
+// fixed stack buffer — no large heap allocation. This is why we can't just use
+// getString() or writeToStream(): both need a big contiguous buffer (getString
+// holds the whole body; writeToStream mallocs a 4 KB block) that the fragmented,
+// no-PSRAM heap can't provide for the big 200 km response — they truncated or
+// even crashed the device. De-chunks a Transfer-Encoding: chunked response on
+// the fly (getStreamPtr() delivers the raw body with chunk framing intact). A
+// 9 s deadline bounds every read so a stalled socket can't hang the loop.
+static size_t streamBodyToFile(HTTPClient& http, bool chunked, int contentLen, File& f) {
+    Stream* stream = http.getStreamPtr();
+    uint8_t buf[512];
+    unsigned long deadline = millis() + 9000;
+    size_t total = 0;
+
+    if (chunked) {
+        while (millis() < deadline) {
+            String hdr = stream->readStringUntil('\n');   // "<hexsize>\r"
+            hdr.trim();
+            if (hdr.isEmpty()) {                            // blank line / timeout
+                if (!http.connected()) break;
+                continue;
+            }
+            long n = strtol(hdr.c_str(), nullptr, 16);
+            if (n <= 0) break;                             // 0-size chunk = end of body
+            while (n > 0 && millis() < deadline) {
+                int want = n < (long)sizeof(buf) ? (int)n : (int)sizeof(buf);
+                int got  = stream->readBytes(buf, want);
+                if (got <= 0) { if (!http.connected()) return total; else continue; }
+                f.write(buf, got);
+                total += got;
+                n -= got;
+            }
+            stream->readBytes(buf, 2);                     // consume chunk's trailing CRLF
+        }
+    } else {
+        long n = contentLen;                               // -1 → read until closed
+        while (n != 0 && millis() < deadline &&
+               (http.connected() || stream->available())) {
+            if (!stream->available()) { delay(1); continue; }
+            int want = (n > 0 && n < (long)sizeof(buf)) ? (int)n : (int)sizeof(buf);
+            int got  = stream->readBytes(buf, want);
+            if (got <= 0) break;
+            f.write(buf, got);
+            total += got;
+            if (n > 0) n -= got;
+        }
+    }
+    return total;
+}
+
+// Advances `f` to just past the first occurrence of `token`. Returns false if
+// EOF is hit first. Used to seek to the "states": value without loading the
+// document — the token is distinctive enough that it can't appear before the
+// real one in OpenSky's {"time":N,"states":[...]} envelope.
+static bool skipPastToken(File& f, const char* token) {
+    size_t i = 0, n = strlen(token);
+    int c;
+    while ((c = f.read()) >= 0) {
+        if (c == (uint8_t)token[i]) { if (++i == n) return true; }
+        else                        { i = (c == (uint8_t)token[0]) ? 1 : 0; }
+    }
+    return false;
+}
+
 bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
                    std::vector<Aircraft>& out) {
     out.clear();
@@ -120,6 +185,16 @@ bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
     // over from an anonymous 429 — otherwise entering credentials wouldn't take
     // effect until the (up to ~24 h) anonymous Retry-After elapsed.
     bool authed = ensureToken();
+
+    // Record which tier this request is on for the status panel. Credentials
+    // present + a token obtained = Authenticated (key valid); credentials
+    // present but no token = Failed (bad key); no credentials = Anonymous. A
+    // token accepted here can still be rejected mid-request (401) — that path
+    // downgrades this to Failed below.
+    bool credsProvided = openskyClientId()[0] != '\0';
+    _status.auth = !credsProvided ? ApiAuth::Anonymous
+                 : authed         ? ApiAuth::Authenticated
+                                  : ApiAuth::Failed;
 
     // Respect a prior 429 Retry-After — don't hammer while throttled.
     if (_blockUntilMs && (long)(millis() - _blockUntilMs) < 0) {
@@ -145,142 +220,169 @@ bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
     Serial.printf("[OpenSky] GET %s  (%s, heap=%u)\n", url, authed ? "authed" : "anonymous",
                   ESP.getFreeHeap());
 
-    // Give the TLS handshake its best shot at finding a contiguous block —
-    // the map's PNG decoder buffer is the largest thing we can free on
-    // demand (see compose()'s comment in map.cpp); a cheap no-op if it's
-    // already released.
-    M5Dial.Display.releasePngMemory();
+    // NOTE: we used to call M5Dial.Display.releasePngMemory() here to free the
+    // map's ~45 KB PNG-decoder buffer before the TLS handshake. That was the
+    // root cause of "maps only load at one zoom level": once freed, the decoder
+    // could never be re-allocated for a later map compose, because the largest
+    // contiguous free block on this (no-PSRAM) heap is only ~31 KB — smaller
+    // than the single ~45 KB allocation pngle needs. Map compose and OpenSky
+    // polls never run at the same time (both block this loop), so the decoder
+    // is allocated once at boot (map.cpp begin() priming, while a 45 KB block
+    // still exists) and kept resident for the life of the program. See
+    // map.cpp's compose() note. TLS still gets enough contiguous room here.
 
-    const char* hdrKeys[] = { "X-Rate-Limit-Retry-After-Seconds" };
-    HTTPClient http;
-    WiFiClientSecure client;   // must outlive http — see loop comment below
-    client.setInsecure();      // Skip TLS cert verification for v1
-    client.setTimeout(10);
-    int code = -1, size = -1;
+    // The response body is streamed to this flash scratch file and parsed only
+    // AFTER the TLS connection is torn down (see the scope note below).
+    static const char* JSON_TMP = "/osky.json";
+    int  code = -1, size = -1;
+    bool chunked = false;
 
-    // A negative HTTPClient code means the connection itself failed before
-    // any server response — on this device that's almost always the TLS
-    // handshake unable to allocate its buffers on a fragmented heap, not a
-    // real network problem, and it's been observed to be transient (works
-    // again a moment later). One retry after a short pause resolves most of
-    // these. `client` is declared outside this loop deliberately: http holds
-    // a pointer to it, and is still used (getString(), end()) after the loop
-    // exits, so client must still be alive then — an earlier version scoped
-    // client inside the loop, which destroyed it on `break`/loop-end while
-    // http still pointed at it, corrupting memory the moment http.getString()
-    // touched it (crashed on literally every successful fetch).
-    for (int attempt = 0; attempt < 2; attempt++) {
-        if (attempt > 0) client.stop();   // close the failed attempt's socket first
+    // ── HTTP request + body-to-flash, in its own scope ───────────────────────
+    // The WiFiClientSecure and HTTPClient live only inside this block, so both
+    // are destroyed at the closing brace — freeing the ~40 KB mbedTLS context
+    // BEFORE we parse. On this fragmented, no-PSRAM heap the TLS context and a
+    // large filtered JSON document can't both fit at once: with TLS still up the
+    // parser had only ~24 KB and the big 200 km response failed with NoMemory
+    // (or a hard OOM crash). Freeing it explicitly mid-function via client.stop()
+    // instead corrupted the *next* handshake (every subsequent fetch then failed
+    // with a TLS start error), so we rely on clean RAII destruction at scope
+    // exit. The body is safely on flash by then, so nothing is lost.
+    {
+        const char* hdrKeys[] = { "X-Rate-Limit-Retry-After-Seconds", "Transfer-Encoding" };
+        HTTPClient       http;
+        WiFiClientSecure client;   // must outlive http within this block
+        client.setInsecure();      // Skip TLS cert verification for v1
+        client.setTimeout(10);
 
-        http.begin(client, url);
-        if (authed)
-            http.addHeader("Authorization", "Bearer " + _token);
-        http.setTimeout(9000);
-        http.collectHeaders(hdrKeys, 1);   // throttle hint, for a precise 429 backoff
+        // A negative HTTPClient code means the connection itself failed before
+        // any server response — on this device that's almost always the TLS
+        // handshake unable to allocate its buffers on a fragmented heap, not a
+        // real network problem, and it's transient. One retry after a short
+        // pause resolves most of these.
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (attempt > 0) client.stop();   // close the failed attempt's socket first
 
-        code = http.GET();
-        size = http.getSize();   // Content-Length, or -1 if not provided
-        if (code >= 0) break;
+            http.begin(client, url);
+            if (authed)
+                http.addHeader("Authorization", "Bearer " + _token);
+            http.setTimeout(9000);
+            http.collectHeaders(hdrKeys, 2);   // 429 retry hint + Transfer-Encoding
 
-        Serial.printf("[OpenSky] HTTP %d (heap=%u) — retrying once\n", code, ESP.getFreeHeap());
-        http.end();
-        delay(250);
-    }
+            code = http.GET();
+            size = http.getSize();   // Content-Length, or -1 if not provided
+            if (code >= 0) break;
 
-    Serial.printf("[OpenSky] HTTP %d  (Content-Length %d)\n", code, size);
-
-    if (code != HTTP_CODE_OK) {
-        char msg[48];
-        if (code < 0) {              // HTTPClient negative == connection/TLS failure
-            snprintf(msg, sizeof(msg), "Net error %d", code);
-            setStatus(ApiState::NetError, code, size, msg);
-        } else if (code == HTTP_CODE_UNAUTHORIZED) {
-            // Token expired/invalid — drop it so the next cycle re-authenticates.
-            _token = "";
-            _tokenExpiryMs = 0;
-            snprintf(msg, sizeof(msg), "Auth failed (401)");
-            setStatus(ApiState::HttpError, code, size, msg);
-        } else if (code == HTTP_CODE_TOO_MANY_REQUESTS) {
-            long retry = http.header("X-Rate-Limit-Retry-After-Seconds").toInt();
-            if (retry <= 0) retry = 60;
-            _blockUntilMs = millis() + (unsigned long)retry * 1000UL;
-            snprintf(msg, sizeof(msg), "Rate limited (%lds)", retry);
-            setStatus(ApiState::HttpError, code, size, msg);
-        } else {
-            snprintf(msg, sizeof(msg), "HTTP %d", code);
-            setStatus(ApiState::HttpError, code, size, msg);
+            Serial.printf("[OpenSky] HTTP %d (heap=%u) — retrying once\n", code, ESP.getFreeHeap());
+            http.end();
+            delay(250);
         }
-        Serial.printf("[OpenSky] %s\n", msg);
+
+        Serial.printf("[OpenSky] HTTP %d  (Content-Length %d)\n", code, size);
+
+        if (code != HTTP_CODE_OK) {
+            char msg[48];
+            if (code < 0) {              // HTTPClient negative == connection/TLS failure
+                snprintf(msg, sizeof(msg), "Net error %d", code);
+                setStatus(ApiState::NetError, code, size, msg);
+            } else if (code == HTTP_CODE_UNAUTHORIZED) {
+                // Token expired/invalid — drop it so the next cycle re-authenticates.
+                _token = "";
+                _tokenExpiryMs = 0;
+                _status.auth = ApiAuth::Failed;   // key present but rejected by the server
+                snprintf(msg, sizeof(msg), "Auth failed (401)");
+                setStatus(ApiState::HttpError, code, size, msg);
+            } else if (code == HTTP_CODE_TOO_MANY_REQUESTS) {
+                long retry = http.header("X-Rate-Limit-Retry-After-Seconds").toInt();
+                if (retry <= 0) retry = 60;
+                _blockUntilMs = millis() + (unsigned long)retry * 1000UL;
+                snprintf(msg, sizeof(msg), "Rate limited (%lds)", retry);
+                setStatus(ApiState::HttpError, code, size, msg);
+            } else {
+                snprintf(msg, sizeof(msg), "HTTP %d", code);
+                setStatus(ApiState::HttpError, code, size, msg);
+            }
+            Serial.printf("[OpenSky] %s\n", msg);
+            http.end();
+            return false;   // client + http destroyed by scope exit
+        }
+
+        _blockUntilMs = 0;   // successful call — clear any prior backoff
+        chunked = http.header("Transfer-Encoding").equalsIgnoreCase("chunked");
+
+        // Stream the body to flash with a small fixed buffer (streamBodyToFile
+        // de-chunks on the fly). getString()/writeToStream() both need a big
+        // contiguous heap block this device can't provide for the 200 km
+        // response and truncated ("IncompleteInput" — the "incomplete data" seen
+        // only at the most-zoomed-out level) or crashed. Going via flash keeps
+        // the raw body out of RAM entirely.
+        File wf = LittleFS.open(JSON_TMP, "w");
+        if (!wf) {
+            http.end();
+            setStatus(ApiState::ParseError, code, size, "FS open failed");
+            Serial.println("[OpenSky] JSON scratch open failed");
+            return false;
+        }
+        size = (int)streamBodyToFile(http, chunked, size, wf);   // de-chunked body size
+        wf.close();
         http.end();
+    }   // ← WiFiClientSecure + HTTPClient destroyed here; ~40 KB TLS context freed
+
+    Serial.printf("[OpenSky] body %d bytes (chunked=%d) heap=%u\n",
+                  size, chunked, ESP.getFreeHeap());
+
+    // Parse the "states" array one aircraft at a time, straight from the flash
+    // file. Building the whole (even filtered) document in RAM allocated a large
+    // block for a big 200 km response that fragmented the heap so badly the NEXT
+    // TLS handshake failed with a start error. Streaming element-by-element keeps
+    // peak heap to a single ~200-byte state vector plus the growing result
+    // vector, so memory stays tiny and stable regardless of response size — and
+    // no per-field filter is needed since each element is parsed on its own.
+    File rf = LittleFS.open(JSON_TMP, "r");
+    if (!rf) {
+        setStatus(ApiState::ParseError, code, size, "FS read failed");
+        Serial.println("[OpenSky] JSON scratch read failed");
         return false;
     }
 
-    _blockUntilMs = 0;   // successful call — clear any prior backoff
-
-    // Use a filter document to only pull the fields we need.
-    // This keeps heap usage low — no PSRAM on ESP32-S3FN8.
-    JsonDocument filter;
-    JsonArray fs = filter["states"].to<JsonArray>();
-    JsonArray fe = fs.add<JsonArray>();
-    fe.add(true);   // [0]  icao24
-    fe.add(true);   // [1]  callsign
-    fe.add(true);   // [2]  origin_country
-    fe.add(false);  // [3]  time_position   (skip)
-    fe.add(false);  // [4]  last_contact    (skip)
-    fe.add(true);   // [5]  longitude
-    fe.add(true);   // [6]  latitude
-    fe.add(true);   // [7]  baro_altitude
-    fe.add(true);   // [8]  on_ground
-    fe.add(true);   // [9]  velocity
-    fe.add(true);   // [10] true_track
-    fe.add(false);  // [11] vertical_rate  (skip)
-    fe.add(false);  // [12] sensors        (skip)
-    fe.add(false);  // [13] geo_altitude   (skip)
-    fe.add(true);   // [14] squawk
-
-    // getStream() hands back the raw socket and does NOT de-chunk a
-    // "Transfer-Encoding: chunked" response — only getString()/writeToStream()
-    // do that internally. OpenSky's authenticated /states/all response has no
-    // Content-Length (getSize() == -1 above), so use getString() to be safe
-    // against chunked encoding rather than risk feeding raw chunk framing to
-    // the JSON parser.
-    String body = http.getString();
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, body,
-                                               DeserializationOption::Filter(filter));
-    http.end();
-
-    if (err) {
-        char msg[48];
-        snprintf(msg, sizeof(msg), "JSON: %s", err.c_str());
-        setStatus(ApiState::ParseError, code, size, msg);
-        Serial.printf("[OpenSky] JSON error: %s\n", err.c_str());
-        return false;
+    // Seek to the value of "states" and check it's an array (not null). The
+    // envelope is {"time":<n>,"states":[[...],...]} or "states":null.
+    int c = -1;
+    if (skipPastToken(rf, "\"states\":")) {
+        do { c = rf.read(); } while (c == ' ' || c == '\t' || c == '\n' || c == '\r');
     }
-
-    JsonArray states = doc["states"].as<JsonArray>();
-    if (states.isNull()) {
-        // HTTP 200 but states:null. OpenSky returns this both for a genuinely
-        // empty sky and for anonymous clients that are over their daily quota,
-        // so flag it as a soft failure rather than success.
+    if (c != '[') {
+        rf.close();
+        LittleFS.remove(JSON_TMP);
+        // states:null (or missing) — genuinely empty sky OR over anonymous quota.
         setStatus(ApiState::NoData, code, size, "No data (states:null)");
         Serial.println("[OpenSky] states:null — empty sky or over quota");
         return false;
     }
 
-    for (JsonArray s : states) {
-        // Must have position data
-        if (s[5].isNull() || s[6].isNull()) continue;
+    // Now positioned just after the array '['. Deserialize one state vector at a
+    // time; between elements skip whitespace/commas, and stop at the closing ']'.
+    JsonDocument elem;                        // reused each iteration (one vector)
+    DeserializationError err{};
+    while ((int)out.size() < MAX_AIRCRAFT) {
+        do {
+            c = rf.peek();
+            if (c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r') rf.read();
+            else break;
+        } while (true);
+        if (c == ']' || c < 0) break;         // end of array / EOF
+
+        err = deserializeJson(elem, rf);      // parses exactly one [ ... ] element
+        if (err) break;
+
+        JsonArrayConst s = elem.as<JsonArrayConst>();
+        if (s.isNull() || s[5].isNull() || s[6].isNull()) continue;   // need position
 
         Aircraft ac{};
-
         const char* icao  = s[0];
         const char* cs    = s[1].isNull() ? nullptr : s[1].as<const char*>();
         const char* cntry = s[2];
-
-        strncpy(ac.icao24,   icao  ? icao  : "??????", sizeof(ac.icao24) - 1);
-        strncpy(ac.country,  cntry ? cntry : "???",    sizeof(ac.country) - 1);
-
+        strncpy(ac.icao24,  icao  ? icao  : "??????", sizeof(ac.icao24) - 1);
+        strncpy(ac.country, cntry ? cntry : "???",    sizeof(ac.country) - 1);
         if (cs) {
             strncpy(ac.callsign, cs, sizeof(ac.callsign) - 1);
             // Trim trailing spaces OpenSky pads into callsigns
@@ -289,23 +391,33 @@ bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
         } else {
             strncpy(ac.callsign, ac.icao24, sizeof(ac.callsign) - 1);
         }
-
         ac.lon      = s[5].as<float>();
         ac.lat      = s[6].as<float>();
         ac.altM     = s[7].isNull() ? 0.0f : s[7].as<float>();
         ac.onGround = s[8].as<bool>();
         ac.speedMs  = s[9].isNull() ? 0.0f : s[9].as<float>();
         ac.heading  = s[10].isNull() ? 0.0f : s[10].as<float>();
-
         const char* sq = s[14].isNull() ? nullptr : s[14].as<const char*>();
         if (sq) strncpy(ac.squawk, sq, sizeof(ac.squawk) - 1);
-
         out.push_back(ac);
+    }
+    rf.close();
+    LittleFS.remove(JSON_TMP);
+
+    // A parse error with nothing collected is a real failure; a hiccup after we
+    // already have aircraft (e.g. a truncated tail) still yields a usable frame.
+    if (err && out.empty()) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "JSON: %s", err.c_str());
+        setStatus(ApiState::ParseError, code, size, msg);
+        Serial.printf("[OpenSky] JSON error: %s (%d bytes)\n", err.c_str(), size);
+        return false;
     }
 
     char msg[48];
     snprintf(msg, sizeof(msg), "%d aircraft", (int)out.size());
     setStatus(ApiState::Ok, code, size, msg);
-    Serial.printf("[OpenSky] Parsed %d aircraft\n", (int)out.size());
+    Serial.printf("[OpenSky] Parsed %d aircraft%s\n", (int)out.size(),
+                  err ? " (partial)" : "");
     return true;
 }

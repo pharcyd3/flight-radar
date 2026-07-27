@@ -10,6 +10,11 @@ void runProvisioning();
 // until the user saves or the portal times out. Call from the settings menu.
 void runLocationPortal();
 
+// Settings-menu action: approximate and set home from the device's public IP
+// (no typing). Draws its own progress/result screens. Returns true if a new home
+// was set. Assumes the device is online.
+bool runDetectLocation();
+
 // Call every loop() iteration — detects a 3-second encoder-button hold
 // (factory reset) or a short press (returns true once to open settings).
 void checkResetCombo();

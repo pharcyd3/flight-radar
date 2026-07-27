@@ -17,6 +17,7 @@ struct SettingsState {
     uint8_t minalt        = 0;  // Off/1k/5k/10k/20k ft
     uint8_t trails        = 0;  // On/Off                  — 0 = On
     uint8_t rings         = 0;  // On/Off                  — 0 = On
+    uint8_t map           = 0;  // Full/Lo-fi/Off          — 0 = Full
     uint8_t refresh       = REFRESH_DEFAULT;
     uint8_t buzzEmergency = 0;  // On/Off                  — 0 = On (matches prior default true)
 };
@@ -30,7 +31,15 @@ int  trafficFilter()          { return _s.filter; }
 float minAltitudeM()          { return MIN_ALT_OPTIONS_M[_s.minalt]; }
 bool  showTrails()            { return _s.trails == 0; }
 bool  showRings()             { return _s.rings == 0; }
-unsigned long refreshIntervalMs() { return REFRESH_OPTIONS_MS[_s.refresh]; }
+int   mapMode()               { return _s.map <= MAP_OFF ? _s.map : MAP_FULL; }
+unsigned long refreshIntervalMs() {
+    // "Auto" (index 0) spreads the applicable OpenSky daily budget across 24 h:
+    // the faster authenticated cadence when a client_id is configured, the
+    // slower anonymous cadence otherwise. Adapts live as credentials change.
+    if (_s.refresh == REFRESH_AUTO || _s.refresh >= REFRESH_OPTION_COUNT)
+        return openskyClientId()[0] ? REFRESH_AUTHED_MS : REFRESH_ANON_MS;
+    return REFRESH_FIXED_MS[_s.refresh - 1];   // indices 1..3 → 10/20/30 s
+}
 
 void loadSettings() {
     Preferences prefs;
@@ -42,7 +51,14 @@ void loadSettings() {
     _s.minalt        = prefs.getUChar("s_minalt",  0);
     _s.trails        = prefs.getUChar("s_trails",  0);
     _s.rings         = prefs.getUChar("s_rings",   0);
-    _s.refresh       = prefs.getUChar("s_refresh", REFRESH_DEFAULT);
+    // Key bumped to "s_map2": the option gained a middle "Lo-fi" entry, so old
+    // On/Off (0/1) values would map to Full/Lo-fi. Fresh key → Full default.
+    _s.map           = prefs.getUChar("s_map2",    MAP_FULL);
+    // NOTE: key is "s_refresh2" (not "s_refresh"): the refresh option list
+    // gained an "Auto" entry at index 0, shifting every fixed option up one, so
+    // old saved indices would map to the wrong interval. Bumping the key
+    // abandons the old value and gives every device the new Auto default.
+    _s.refresh       = prefs.getUChar("s_refresh2", REFRESH_DEFAULT);
     _s.buzzEmergency = prefs.getUChar("s_buzz",    0);
     prefs.end();
 }
@@ -57,7 +73,8 @@ static void saveSettings() {
     prefs.putUChar("s_minalt", _s.minalt);
     prefs.putUChar("s_trails", _s.trails);
     prefs.putUChar("s_rings",  _s.rings);
-    prefs.putUChar("s_refresh",_s.refresh);
+    prefs.putUChar("s_map2",   _s.map);
+    prefs.putUChar("s_refresh2",_s.refresh);
     prefs.putUChar("s_buzz",   _s.buzzEmergency);
     prefs.end();
 }
@@ -80,9 +97,9 @@ static constexpr int PANEL_CX = PANEL_X + PANEL_W / 2;
 // so settings panels sit on top of current, real content instead of a blank
 // screen — callers draw their panel immediately after this each frame.
 static void drawBackdrop(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
-                          float homeLat, float homeLon, float radiusKm,
+                          float homeLat, float homeLon, float radiusKm, int zoomIdx,
                           unsigned long lastUpdateMs, bool fetching) {
-    radar.draw(aircraft, homeLat, homeLon, radiusKm, /*selectedIdx=*/-1,
+    radar.draw(aircraft, homeLat, homeLon, radiusKm, zoomIdx, /*selectedIdx=*/-1,
                lastUpdateMs, fetching);
 }
 
@@ -118,7 +135,8 @@ static const char* OPTS_UNITS[]   = { "ft/kts", "m/km/h" };
 static const char* OPTS_FILTER[]  = { "Airborne", "All" };
 static const char* OPTS_MINALT[]  = { "Off", "1,000ft", "5,000ft", "10,000ft", "20,000ft" };
 static const char* OPTS_ONOFF[]   = { "On", "Off" };
-static const char* OPTS_REFRESH[] = { "10s", "20s", "30s" };
+static const char* OPTS_MAP[]     = { "Full", "Lo-fi", "Off" };
+static const char* OPTS_REFRESH[] = { "Auto", "10s", "20s", "30s" };
 
 enum class ItemKind : uint8_t { Cycle, Action, Danger };
 
@@ -131,10 +149,10 @@ struct MenuItem {
 };
 
 static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
-                               float homeLat, float homeLon, float radiusKm,
+                               float homeLat, float homeLon, float radiusKm, int zoomIdx,
                                unsigned long lastUpdateMs, bool fetching);
 static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
-                                    float homeLat, float homeLon, float radiusKm,
+                                    float homeLat, float homeLon, float radiusKm, int zoomIdx,
                                     unsigned long lastUpdateMs, bool fetching);
 
 static const MenuItem MENU_ITEMS[] = {
@@ -145,8 +163,10 @@ static const MenuItem MENU_ITEMS[] = {
     { "Min altitude",        ItemKind::Cycle,  OPTS_MINALT,  5, &_s.minalt },
     { "Heading trails",      ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.trails },
     { "Range rings",         ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.rings },
-    { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, 3, &_s.refresh },
+    { "Map",                 ItemKind::Cycle,  OPTS_MAP,     3, &_s.map },
+    { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, REFRESH_OPTION_COUNT, &_s.refresh },
     { "Buzz on Emergency",   ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.buzzEmergency },
+    { "Detect location",     ItemKind::Action, nullptr,      0, nullptr },
     { "Location & API Keys", ItemKind::Action, nullptr,      0, nullptr },
     { "Saved Locations",     ItemKind::Action, nullptr,      0, nullptr },
     { "Factory Reset",       ItemKind::Danger, nullptr,      0, nullptr },
@@ -217,10 +237,10 @@ static void drawLocationPickerPanel(int idx) {
 // Rotate to pick a saved favourite, press to make it the active home location.
 // Empty slots are shown but do nothing when selected. Tap or timeout cancels.
 static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
-                               float homeLat, float homeLon, float radiusKm,
+                               float homeLat, float homeLon, float radiusKm, int zoomIdx,
                                unsigned long lastUpdateMs, bool fetching) {
     int idx = 0;
-    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, lastUpdateMs, fetching);
+    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
     drawLocationPickerPanel(idx);
 
     EncoderDebouncer enc;
@@ -281,13 +301,13 @@ static void drawFactoryResetPanel(unsigned long heldMs) {
 // Hold the button 3 s to confirm, matching the same gesture as the physical
 // reset combo; release early, tap, or leave it untouched (timeout) to cancel.
 static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
-                                    float homeLat, float homeLon, float radiusKm,
+                                    float homeLat, float homeLon, float radiusKm, int zoomIdx,
                                     unsigned long lastUpdateMs, bool fetching) {
     unsigned long pressStart   = 0;
     bool          held         = false;
     unsigned long lastActivity = millis();
 
-    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, lastUpdateMs, fetching);
+    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
     drawFactoryResetPanel(0);
 
     // Swallow any residual button state from the press that opened us
@@ -329,11 +349,11 @@ static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircra
 }
 
 void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
-                  float homeLat, float homeLon, float radiusKm,
+                  float homeLat, float homeLon, float radiusKm, int zoomIdx,
                   unsigned long lastUpdateMs, bool fetching) {
     loadSettings();
     int menuIdx = 0;
-    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, lastUpdateMs, fetching);
+    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
     drawMenuPanel(menuIdx);
 
     // Swallow any residual button state from the press that opened us
@@ -377,12 +397,14 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
                 continue;
             }
 
-            if (menuIdx == MENU_COUNT - 3) {        // Location & API Keys
+            if (menuIdx == MENU_COUNT - 4) {         // Detect location (IP)
+                runDetectLocation();
+            } else if (menuIdx == MENU_COUNT - 3) {  // Location & API Keys
                 runLocationPortal();
-            } else if (menuIdx == MENU_COUNT - 2) { // Saved Locations
-                runLocationPicker(radar, aircraft, homeLat, homeLon, radiusKm, lastUpdateMs, fetching);
-            } else {                                 // Factory Reset
-                runFactoryResetConfirm(radar, aircraft, homeLat, homeLon, radiusKm, lastUpdateMs, fetching);
+            } else if (menuIdx == MENU_COUNT - 2) {  // Saved Locations
+                runLocationPicker(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
+            } else {                                  // Factory Reset
+                runFactoryResetConfirm(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
             }
             return;  // back to radar after handling the selected item
         }

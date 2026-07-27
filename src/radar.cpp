@@ -1,8 +1,10 @@
 #include "radar.h"
 #include "config.h"
 #include "map.h"
+#include "lofimap.h"
 #include "settings.h"
 #include <math.h>
+#include <string.h>
 
 // ── Colour themes (RGB565) — mirrors the emulator's THEMES list ─────────────
 struct Theme {
@@ -44,7 +46,43 @@ static const Theme& theme() {
 // already does this (its HALO constant); it was never ported to the device.
 static constexpr uint16_t COL_HALO = 0x0000;
 
-static constexpr float EARTH_R = 6371.0f;  // km
+static constexpr float EARTH_R    = 6371.0f;              // km
+static constexpr float KM_PER_DEG = EARTH_R * 0.0174532925f;  // km per degree latitude
+
+// Scale an RGB565 colour toward black by factor f (0=black, 1=unchanged) — used
+// to fade older trail breadcrumbs. Per-channel multiply on the packed value.
+static uint16_t fade(uint16_t c, float f) {
+    if (f < 0.0f) f = 0.0f;
+    if (f > 1.0f) f = 1.0f;
+    int r = (c >> 11) & 0x1F, g = (c >> 5) & 0x3F, b = c & 0x1F;
+    r = (int)(r * f); g = (int)(g * f); b = (int)(b * f);
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+// ── Trail store ────────────────────────────────────────────────────────────────
+// Fixed static ring-buffer of recent reported positions per tracked aircraft,
+// keyed by icao24. Static (BSS) rather than heap so it never fragments the
+// contiguous free region the TLS handshake / PNG decoder rely on (see config.h).
+namespace {
+struct Trail {
+    char     icao[8];
+    float    lat[TRAIL_LEN];
+    float    lon[TRAIL_LEN];
+    uint8_t  count    = 0;   // valid points held (<= TRAIL_LEN)
+    uint8_t  head     = 0;   // next write index (ring buffer)
+    uint32_t lastSeen = 0;   // _fetchSeq when last updated — least-recent is evicted
+};
+Trail    _trails[MAX_AIRCRAFT];
+uint32_t _fetchSeq = 0;
+
+// Index of the trail slot for `icao`, or -1 if none is currently tracked.
+int trailSlot(const char* icao) {
+    for (int i = 0; i < MAX_AIRCRAFT; ++i)
+        if (_trails[i].count && strncmp(_trails[i].icao, icao, sizeof(_trails[i].icao)) == 0)
+            return i;
+    return -1;
+}
+}  // namespace
 
 // ── Public ───────────────────────────────────────────────────────────────────
 
@@ -62,50 +100,191 @@ void RadarDisplay::worldToScreen(float lat, float lon,
     sy = CY - (int)((dy / radiusKm) * PLOT_R);   // screen Y is inverted
 }
 
+void RadarDisplay::effectivePos(const Aircraft& ac, float& lat, float& lon) const {
+    lat = ac.lat;
+    lon = ac.lon;
+    // Dead reckoning: only for airborne aircraft actually moving. Parked/taxiing
+    // marks would just jitter, and on-ground traffic isn't tracked this way.
+    if (ac.onGround || ac.speedMs < INTERP_MIN_SPEED_MS) return;
+
+    float dt = (float)(millis() - _fetchMs) / 1000.0f;   // seconds since last fetch
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > INTERP_MAX_S) dt = INTERP_MAX_S;             // don't fling stale marks
+
+    float distKm = ac.speedMs * dt / 1000.0f;
+    float hdg    = ac.heading * (float)M_PI / 180.0f;     // heading 0 = north, 90 = east
+    lat += (distKm * cosf(hdg)) / KM_PER_DEG;
+    lon += (distKm * sinf(hdg)) / (KM_PER_DEG * cosf(ac.lat * (float)M_PI / 180.0f));
+}
+
+void RadarDisplay::acToScreen(const Aircraft& ac,
+                              float cLat, float cLon, float radiusKm,
+                              int& sx, int& sy) {
+    float lat, lon;
+    effectivePos(ac, lat, lon);
+    worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
+}
+
 int RadarDisplay::hitTest(int tx, int ty,
                            const std::vector<Aircraft>& aircraft,
                            float cLat, float cLon, float radiusKm) {
-    // Scan in reverse so topmost-drawn aircraft wins on overlap
+    // Scan in reverse so topmost-drawn aircraft wins on overlap. Uses the same
+    // interpolated position the mark is drawn at, so taps land where the dot is.
     for (int i = (int)aircraft.size() - 1; i >= 0; --i) {
         int sx, sy;
-        worldToScreen(aircraft[i].lat, aircraft[i].lon, cLat, cLon, radiusKm, sx, sy);
+        acToScreen(aircraft[i], cLat, cLon, radiusKm, sx, sy);
         int dx = tx - sx, dy = ty - sy;
         if ((dx * dx + dy * dy) <= 144) return i;  // 12 px hit radius
     }
     return -1;
 }
 
+bool RadarDisplay::passesFilter(const Aircraft& ac) const {
+    if (trafficFilter() == 0 && ac.onGround) return false;      // airborne-only
+    if (ac.altM > 0.0f && ac.altM < minAltitudeM()) return false;
+    return true;
+}
+
+bool RadarDisplay::isSelectable(const Aircraft& ac,
+                                float cLat, float cLon, float radiusKm) {
+    if (!passesFilter(ac)) return false;
+    int sx, sy;
+    acToScreen(ac, cLat, cLon, radiusKm, sx, sy);
+    int dx = sx - CX, dy = sy - CY;
+    return (dx * dx + dy * dy) <= (PLOT_R * PLOT_R);            // inside circle
+}
+
+int RadarDisplay::nextSelectable(int current, int dir,
+                                  const std::vector<Aircraft>& aircraft,
+                                  float cLat, float cLon, float radiusKm) {
+    // Selectable indices, in the same (vector) order they're drawn.
+    std::vector<int> vis;
+    for (int i = 0; i < (int)aircraft.size(); ++i)
+        if (isSelectable(aircraft[i], cLat, cLon, radiusKm)) vis.push_back(i);
+    if (vis.empty()) return -1;
+
+    // Where does the current selection sit in that list?
+    int pos = -1;
+    for (int k = 0; k < (int)vis.size(); ++k)
+        if (vis[k] == current) { pos = k; break; }
+
+    // Not currently on a visible aircraft — enter the list at the near end.
+    if (pos < 0) return dir >= 0 ? vis.front() : vis.back();
+
+    int n  = (int)vis.size();
+    int np = ((pos + dir) % n + n) % n;   // step with wrap-around
+    return vis[np];
+}
+
+void RadarDisplay::setFollow(bool following, float homeLat, float homeLon,
+                             const char* label) {
+    _following   = following;
+    _homeMarkLat = homeLat;
+    _homeMarkLon = homeLon;
+    if (label) {
+        strncpy(_followLabel, label, sizeof(_followLabel) - 1);
+        _followLabel[sizeof(_followLabel) - 1] = '\0';
+    } else {
+        _followLabel[0] = '\0';
+    }
+}
+
+int RadarDisplay::findByIcao(const std::vector<Aircraft>& aircraft,
+                             const char* icao) const {
+    if (!icao || !icao[0]) return -1;
+    for (int i = 0; i < (int)aircraft.size(); ++i)
+        if (strncmp(aircraft[i].icao24, icao, sizeof(aircraft[i].icao24)) == 0)
+            return i;
+    return -1;
+}
+
+bool RadarDisplay::offCenter(float lat, float lon,
+                             float cLat, float cLon, float radiusKm, float frac) {
+    int sx, sy;
+    worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
+    int dx = sx - CX, dy = sy - CY;
+    float lim = frac * PLOT_R;
+    return (float)(dx * dx + dy * dy) > lim * lim;
+}
+
 void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
-                         float cLat, float cLon, float radiusKm,
+                         float cLat, float cLon, float radiusKm, int zoomIdx,
                          int selectedIdx, unsigned long lastUpdateMs, bool fetching) {
-    // Map underlay if available, otherwise a solid background.
-    mapLayer.ensure(cLat, cLon, radiusKm);
-    if (!mapLayer.blitTo())
-        M5Dial.Display.fillScreen(COL_BG);
+    // Time base for dead-reckoning interpolation (see effectivePos()).
+    _fetchMs = lastUpdateMs;
+
+    // Composite the whole frame into the off-screen map sprite and push it in one
+    // transfer, so the frame is never seen half-drawn (the flicker the old
+    // push-then-overlay path suffered) and interpolation can animate every redraw.
+    // Fall back to drawing straight to the display only if the sprite isn't ready.
+    bool useSprite = mapLayer.ready();
+    _g = useSprite ? (LovyanGFX*)mapLayer.sprite() : &M5Dial.Display;
+
+    int mm = mapMode();
+    if (mm == MAP_FULL) {
+        // beginScene() leaves the pristine map background in the sprite (loading
+        // or restoring as needed); false means no map available → solid fill.
+        if (!mapLayer.beginScene(cLat, cLon, radiusKm))
+            _g->fillScreen(COL_BG);
+    } else {
+        // Lo-fi or Off: start from a plain themed background (the raster sprite
+        // no longer holds the map, so a later Full frame must restore it).
+        _g->fillScreen(COL_BG);
+        if (useSprite) mapLayer.markSceneDirty();
+        if (mm == MAP_LOFI) drawLoFiMap(cLat, cLon, radiusKm);
+    }
+
+    _g->setTextDatum(MC_DATUM);
     drawRings(radiusKm);
+    drawZoomDots(zoomIdx);
 
-    // Home crosshair
-    M5Dial.Display.drawLine(CX - 6, CY, CX + 6, CY, COL_HOME);
-    M5Dial.Display.drawLine(CX, CY - 6, CX, CY + 6, COL_HOME);
-    M5Dial.Display.drawCircle(CX, CY, 3, COL_HOME);
+    if (_following) {
+        // Tracking an aircraft: the centre is the target, so draw home at its
+        // true offset, and a reticle on the centre to mark the tracked point.
+        int hx, hy;
+        worldToScreen(_homeMarkLat, _homeMarkLon, cLat, cLon, radiusKm, hx, hy);
+        _g->drawLine(hx - 5, hy, hx + 5, hy, COL_HOME);
+        _g->drawLine(hx, hy - 5, hx, hy + 5, COL_HOME);
+        _g->drawCircle(hx, hy, 3, COL_HOME);
 
-    bool  airborneOnly = trafficFilter() == 0;
-    float minAlt       = minAltitudeM();
+        _g->drawCircle(CX, CY, 9, COL_SEL);
+        _g->drawLine(CX - 12, CY, CX - 5, CY, COL_SEL);
+        _g->drawLine(CX + 5, CY, CX + 12, CY, COL_SEL);
+        _g->drawLine(CX, CY - 12, CX, CY - 5, COL_SEL);
+        _g->drawLine(CX, CY + 5, CX, CY + 12, COL_SEL);
+    } else {
+        // Home crosshair at centre
+        _g->drawLine(CX - 6, CY, CX + 6, CY, COL_HOME);
+        _g->drawLine(CX, CY - 6, CX, CY + 6, COL_HOME);
+        _g->drawCircle(CX, CY, 3, COL_HOME);
+    }
+
+    // Breadcrumb trail for the selected aircraft, drawn under the marks.
+    if (showTrails() && selectedIdx >= 0 && selectedIdx < (int)aircraft.size())
+        drawTrail(aircraft[selectedIdx], cLat, cLon, radiusKm);
 
     for (int i = 0; i < (int)aircraft.size(); ++i) {
         const Aircraft& ac = aircraft[i];
 
-        if (airborneOnly && ac.onGround) continue;
-        if (ac.altM > 0.0f && ac.altM < minAlt) continue;
-
+        // Filter first (cheap), then a single projection — reused for the
+        // inside-circle test and the mark, instead of projecting twice.
+        if (!passesFilter(ac)) continue;
         int sx, sy;
-        worldToScreen(ac.lat, ac.lon, cLat, cLon, radiusKm, sx, sy);
-
-        // Skip if outside the radar circle
+        acToScreen(ac, cLat, cLon, radiusKm, sx, sy);
         int dx = sx - CX, dy = sy - CY;
-        if ((dx * dx + dy * dy) > (PLOT_R * PLOT_R)) continue;
+        if ((dx * dx + dy * dy) > (PLOT_R * PLOT_R)) continue;   // outside the circle
 
         drawAircraft(ac, sx, sy, i == selectedIdx);
+    }
+
+    // "FOLLOW <callsign>" banner while tracking.
+    if (_following) {
+        char b[24];
+        snprintf(b, sizeof(b), "FOLLOW %s", _followLabel);
+        _g->setTextDatum(MC_DATUM);
+        _g->setTextSize(1);
+        _g->setTextColor(COL_SEL, COL_BG);
+        _g->drawString(b, CX, 48);
     }
 
     drawPollIcon(lastUpdateMs, fetching);
@@ -114,34 +293,205 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         drawApiStatusOverlay();          // status panel takes precedence
     } else if (selectedIdx >= 0 && selectedIdx < (int)aircraft.size()) {
         drawDetail(aircraft[selectedIdx]);
+        drawFollowButton();              // FOLLOW/STOP control above the detail pill
+    }
+
+    if (useSprite) mapLayer.pushScene();
+}
+
+// Draw the selected aircraft's breadcrumb trail: recorded reported positions
+// oldest→newest, fading in from dim, with a final segment to the live
+// (interpolated) position so the trail connects to where the mark actually is.
+void RadarDisplay::drawTrail(const Aircraft& ac,
+                             float cLat, float cLon, float radiusKm) {
+    int slot = trailSlot(ac.icao24);
+    if (slot < 0) return;
+    const Trail& t = _trails[slot];
+    if (t.count < 1) return;
+
+    int prevx = 0, prevy = 0;
+    bool have = false;
+    for (int k = 0; k < t.count; ++k) {
+        // Ring order: oldest point is count back from head, newest at head-1.
+        int idx = (t.head + TRAIL_LEN - t.count + k) % TRAIL_LEN;
+        int px, py;
+        worldToScreen(t.lat[idx], t.lon[idx], cLat, cLon, radiusKm, px, py);
+
+        float f = t.count > 1 ? (float)k / (float)(t.count - 1) : 1.0f;  // 0=old..1=new
+        if (have)
+            _g->drawLine(prevx, prevy, px, py, fade(COL_SEL, 0.25f + 0.75f * f));
+        _g->fillCircle(px, py, 1, fade(COL_SEL, 0.30f + 0.70f * f));
+        prevx = px; prevy = py; have = true;
+    }
+
+    // Final segment: newest reported point → current interpolated position.
+    int cx, cy;
+    acToScreen(ac, cLat, cLon, radiusKm, cx, cy);
+    _g->drawLine(prevx, prevy, cx, cy, COL_SEL);
+}
+
+// Append the current reported positions to each aircraft's trail, keyed by
+// icao24. Called once per successful fetch (not per frame — trails are the
+// *reported* breadcrumbs; interpolation fills in between them).
+void RadarDisplay::recordHistory(const std::vector<Aircraft>& aircraft) {
+    _fetchSeq++;
+    for (const Aircraft& ac : aircraft) {
+        int slot = trailSlot(ac.icao24);
+        if (slot < 0) {
+            // No slot yet — take a free one, else evict the least-recently-seen.
+            int oldest = 0;
+            uint32_t oldestSeen = 0xFFFFFFFFu;
+            for (int i = 0; i < MAX_AIRCRAFT; ++i) {
+                if (_trails[i].count == 0) { slot = i; break; }
+                if (_trails[i].lastSeen < oldestSeen) { oldestSeen = _trails[i].lastSeen; oldest = i; }
+            }
+            if (slot < 0) slot = oldest;
+            Trail& nt = _trails[slot];
+            strncpy(nt.icao, ac.icao24, sizeof(nt.icao) - 1);
+            nt.icao[sizeof(nt.icao) - 1] = '\0';
+            nt.count = 0;
+            nt.head  = 0;
+        }
+
+        Trail& t = _trails[slot];
+        // Skip a new point if the aircraft has barely moved (~<50 m), so a
+        // near-stationary target doesn't pile identical breadcrumbs.
+        if (t.count) {
+            int last = (t.head + TRAIL_LEN - 1) % TRAIL_LEN;
+            float dlat = ac.lat - t.lat[last], dlon = ac.lon - t.lon[last];
+            if (dlat * dlat + dlon * dlon < 2.5e-7f) { t.lastSeen = _fetchSeq; continue; }
+        }
+        t.lat[t.head] = ac.lat;
+        t.lon[t.head] = ac.lon;
+        t.head = (t.head + 1) % TRAIL_LEN;
+        if (t.count < TRAIL_LEN) t.count++;
+        t.lastSeen = _fetchSeq;
     }
 }
 
 void RadarDisplay::drawBoot() {
-    M5Dial.Display.fillScreen(COL_BG);
-    M5Dial.Display.setTextColor(COL_RING_LBL, COL_BG);
-    M5Dial.Display.setTextSize(2);
-    M5Dial.Display.drawString("FlightDial", CX, CY - 16);
-    M5Dial.Display.setTextSize(1);
-    M5Dial.Display.setTextColor(COL_STATUS, COL_BG);
-    M5Dial.Display.drawString("Live Aircraft Radar", CX, CY + 12);
+    auto& d = M5Dial.Display;
+    d.fillScreen(COL_BG);
+    d.setTextDatum(MC_DATUM);
+
+    // ── Plane icon: a top-down airliner silhouette, nose up, drawn from vector
+    // primitives so it stays crisp and picks up the active theme colour ──
+    const int      px    = CX, py = 80;   // icon centre
+    const uint16_t plane = COL_RING_LBL;
+
+    // Swept main wings from mid-fuselage
+    d.fillTriangle(px, py - 4,  px - 36, py + 16,  px, py + 10, plane);
+    d.fillTriangle(px, py - 4,  px + 36, py + 16,  px, py + 10, plane);
+    // Swept tailplane (horizontal stabiliser)
+    d.fillTriangle(px, py + 14, px - 15, py + 28,  px, py + 24, plane);
+    d.fillTriangle(px, py + 14, px + 15, py + 28,  px, py + 24, plane);
+    // Fuselage + pointed nose cone
+    d.fillRoundRect(px - 4, py - 26, 8, 56, 4, plane);
+    d.fillTriangle(px - 4, py - 22, px + 4, py - 22, px, py - 34, plane);
+
+    // ── Title ──
+    d.setTextColor(COL_RING_LBL, COL_BG);
+    d.setTextSize(2);
+    d.drawString("Frank's", CX, CY + 30);
+    d.drawString("Flight Radar", CX, CY + 54);
 }
 
 // ── Private ──────────────────────────────────────────────────────────────────
+
+// Draws the embedded lo-fi vector map (coastlines/borders/rivers + city labels)
+// as themed lines into the current target, culling each feature by its stored
+// bounding box. The plain themed background has already been filled by draw().
+void RadarDisplay::drawLoFiMap(float cLat, float cLon, float radiusKm) {
+    if (!lofi::ready()) return;
+
+    // View bounding box in degrees, with a small margin so features straddling
+    // the edge still draw. cosf(cLat) accounts for longitude compression.
+    float cosLat = cosf(cLat * (float)M_PI / 180.0f);
+    if (cosLat < 0.01f) cosLat = 0.01f;
+    float dLat = (radiusKm / KM_PER_DEG) * 1.15f;
+    float dLon = (radiusKm / (KM_PER_DEG * cosLat)) * 1.15f;
+    float vMinLon = cLon - dLon, vMaxLon = cLon + dLon;
+    float vMinLat = cLat - dLat, vMaxLat = cLat + dLat;
+    float u = lofi::degPerUnit();
+
+    // ── Lines ──
+    const uint8_t* p = lofi::linesBegin();
+    lofi::Line L;
+    for (uint32_t i = 0; i < lofi::lineCount(); ++i) {
+        p = lofi::readLine(p, L);
+        if (L.maxLon * u < vMinLon || L.minLon * u > vMaxLon ||
+            L.maxLat * u < vMinLat || L.minLat * u > vMaxLat) continue;   // cull
+
+        uint16_t col = (L.layer == lofi::LAYER_COAST)  ? COL_RING_LBL
+                     : (L.layer == lofi::LAYER_BORDER) ? COL_GND
+                                                       : COL_RING;   // water
+        int px = 0, py = 0;
+        bool have = false;
+        for (uint16_t k = 0; k < L.nPts; ++k) {
+            float lon, lat;
+            lofi::linePoint(L, k, lon, lat);
+            int sx, sy;
+            worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
+            if (have) _g->drawLine(px, py, sx, sy, col);   // sprite clips off-screen
+            px = sx; py = sy; have = true;
+        }
+    }
+
+    // ── Cities: dots + de-collided labels (blob is rank-sorted, biggest first) ──
+    struct Rect { int x0, y0, x1, y1; };
+    Rect placed[8];
+    int  nPlaced = 0, dots = 0;
+    const uint8_t* c = lofi::citiesBegin();
+    lofi::City C;
+    for (uint32_t i = 0; i < lofi::cityCount() && dots < 40; ++i) {
+        c = lofi::readCity(c, C);
+        float lon = C.lon * u, lat = C.lat * u;
+        if (lon < vMinLon || lon > vMaxLon || lat < vMinLat || lat > vMaxLat) continue;
+
+        int sx, sy;
+        worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
+        int ddx = sx - CX, ddy = sy - CY;
+        if (ddx * ddx + ddy * ddy > PLOT_R * PLOT_R) continue;   // inside the scope only
+
+        _g->fillCircle(sx, sy, 1, COL_RING_LBL);
+        ++dots;
+
+        char nm[25];
+        int  nl = C.nameLen < 24 ? C.nameLen : 24;
+        memcpy(nm, C.name, nl);
+        nm[nl] = '\0';
+
+        int  lx = sx + 3, ly = sy - 3;
+        Rect r{ lx - 1, ly - 5, lx + nl * 6, ly + 5 };
+        bool clash = false;
+        for (int j = 0; j < nPlaced; ++j) {
+            Rect& q = placed[j];
+            if (!(r.x1 < q.x0 || r.x0 > q.x1 || r.y1 < q.y0 || r.y0 > q.y1)) { clash = true; break; }
+        }
+        if (!clash && nPlaced < 8) {
+            _g->setTextDatum(ML_DATUM);
+            _g->setTextSize(1);
+            _g->setTextColor(COL_STATUS, COL_BG);
+            _g->drawString(nm, lx, ly);
+            placed[nPlaced++] = r;
+        }
+    }
+    _g->setTextDatum(MC_DATUM);   // restore the default datum for later text
+}
 
 void RadarDisplay::drawRings(float radiusKm) {
     if (!showRings()) return;
 
     // Three concentric rings (100%, 50%, 25% of radius)
-    M5Dial.Display.drawCircle(CX, CY, PLOT_R,     COL_RING);
-    M5Dial.Display.drawCircle(CX, CY, PLOT_R / 2, COL_RING);
-    M5Dial.Display.drawCircle(CX, CY, PLOT_R / 4, COL_RING);
+    _g->drawCircle(CX, CY, PLOT_R,     COL_RING);
+    _g->drawCircle(CX, CY, PLOT_R / 2, COL_RING);
+    _g->drawCircle(CX, CY, PLOT_R / 4, COL_RING);
 
     // North tick + label
-    M5Dial.Display.drawLine(CX, CY - PLOT_R, CX, CY - PLOT_R + 8, COL_RING_LBL);
-    M5Dial.Display.setTextSize(1);
-    M5Dial.Display.setTextColor(COL_RING_LBL, COL_BG);
-    M5Dial.Display.drawString("N", CX, CY - PLOT_R - 8);
+    _g->drawLine(CX, CY - PLOT_R, CX, CY - PLOT_R + 8, COL_RING_LBL);
+    _g->setTextSize(1);
+    _g->setTextColor(COL_RING_LBL, COL_BG);
+    _g->drawString("N", CX, CY - PLOT_R - 8);
 
     // Range labels on the 50% and 100% rings (right side). Uses the bright
     // ring-label colour (same as "N"), not the dim ring colour itself — the
@@ -149,11 +499,31 @@ void RadarDisplay::drawRings(float radiusKm) {
     // the text body was essentially invisible and only faint anti-aliased
     // glyph edges showed, which is what read as "little black triangles".
     char buf[16];
-    M5Dial.Display.setTextColor(COL_RING_LBL, COL_BG);
+    _g->setTextColor(COL_RING_LBL, COL_BG);
     snprintf(buf, sizeof(buf), "%.0fkm", radiusKm * 0.5f);
-    M5Dial.Display.drawString(buf, CX + PLOT_R / 2 + 14, CY);
+    _g->drawString(buf, CX + PLOT_R / 2 + 14, CY);
     snprintf(buf, sizeof(buf), "%.0fkm", radiusKm);
-    M5Dial.Display.drawString(buf, CX + PLOT_R + 14, CY);
+    _g->drawString(buf, CX + PLOT_R + 14, CY);
+}
+
+// Row of dots near the top of the round display — one per zoom step, with the
+// current level highlighted (bigger + bright) — so the zoom level reads at a
+// glance without having to parse the "Nkm" ring labels. Each dot gets a dark
+// halo behind it for the same map-contrast reason as the aircraft marks.
+void RadarDisplay::drawZoomDots(int zoomIdx) {
+    static constexpr int DOT_Y        = 26;   // just below the "N" tick
+    static constexpr int DOT_GAP      = 14;
+    static constexpr int DOT_R        = 3;
+    static constexpr int DOT_R_ACTIVE = 4;
+
+    int startX = CX - (ZOOM_COUNT - 1) * DOT_GAP / 2;
+    for (int i = 0; i < ZOOM_COUNT; i++) {
+        int  x      = startX + i * DOT_GAP;
+        bool active = (i == zoomIdx);
+        int  r      = active ? DOT_R_ACTIVE : DOT_R;
+        _g->fillCircle(x, DOT_Y, r + 2, COL_HALO);
+        _g->fillCircle(x, DOT_Y, r, active ? COL_SEL : COL_RING_LBL);
+    }
 }
 
 void RadarDisplay::drawAircraft(const Aircraft& ac, int sx, int sy, bool selected) {
@@ -179,47 +549,47 @@ void RadarDisplay::drawAircraft(const Aircraft& ac, int sx, int sy, bool selecte
         const float len = 13.0f;
         float sx0 = sx + sinR * gap,       sy0 = sy - cosR * gap;
         float ex  = sx + sinR * (gap + len), ey = sy - cosR * (gap + len);
-        M5Dial.Display.drawWideLine(sx0, sy0, ex, ey, 2.6f, COL_HALO);
-        M5Dial.Display.drawWideLine(sx0, sy0, ex, ey, 1.2f, col);
+        _g->drawWideLine(sx0, sy0, ex, ey, 2.6f, COL_HALO);
+        _g->drawWideLine(sx0, sy0, ex, ey, 1.2f, col);
     }
 
     // Body dot — dark halo ring behind it for the same map-contrast reason,
     // then an extra red ring further out still for emergencies so they read
     // as "highlighted" at a glance rather than just "a red dot instead of
     // white".
-    M5Dial.Display.fillCircle(sx, sy, radius + 2, COL_HALO);
+    _g->fillCircle(sx, sy, radius + 2, COL_HALO);
     if (emergency) {
-        M5Dial.Display.drawCircle(sx, sy, radius + 4, COL_HOME);
+        _g->drawCircle(sx, sy, radius + 4, COL_HOME);
     }
-    M5Dial.Display.fillCircle(sx, sy, radius, col);
+    _g->fillCircle(sx, sy, radius, col);
 
     // Callsign label: Off (never) / Selected (only this one) / All
     int labels = flightLabels();
     bool showLabel = (labels == 2) || (labels == 1 && selected) || emergency;
     if (showLabel) {
-        M5Dial.Display.setTextSize(1);
-        M5Dial.Display.setTextColor(emergency ? COL_HOME : (selected ? COL_SEL : COL_STATUS), COL_BG);
-        M5Dial.Display.drawString(ac.callsign, sx, sy - 16);
+        _g->setTextSize(1);
+        _g->setTextColor(emergency ? COL_HOME : (selected ? COL_SEL : COL_STATUS), COL_BG);
+        _g->drawString(ac.callsign, sx, sy - 16);
     }
 }
 
 void RadarDisplay::drawDetail(const Aircraft& ac) {
     // Pill-shaped overlay in the lower portion of the round screen
-    M5Dial.Display.fillRoundRect(18, 148, 204, 76, 6, COL_OVERLAY);
-    M5Dial.Display.drawRoundRect(18, 148, 204, 76, 6, COL_SEL);
+    _g->fillRoundRect(18, 148, 204, 76, 6, COL_OVERLAY);
+    _g->drawRoundRect(18, 148, 204, 76, 6, COL_SEL);
 
     char buf[48];
     int lineY = 160;
     const int step = 16;
 
     // Row 1: callsign + ICAO
-    M5Dial.Display.setTextSize(1);
-    M5Dial.Display.setTextColor(COL_SEL, COL_OVERLAY);
+    _g->setTextSize(1);
+    _g->setTextColor(COL_SEL, COL_OVERLAY);
     snprintf(buf, sizeof(buf), "%s  [%s]",
              ac.callsign[0] ? ac.callsign : "N/A", ac.icao24);
-    M5Dial.Display.drawString(buf, CX, lineY);   lineY += step;
+    _g->drawString(buf, CX, lineY);   lineY += step;
 
-    M5Dial.Display.setTextColor(COL_STATUS, COL_OVERLAY);
+    _g->setTextColor(COL_STATUS, COL_OVERLAY);
 
     bool metric = activeUnits() == 1;
 
@@ -230,7 +600,7 @@ void RadarDisplay::drawDetail(const Aircraft& ac) {
     } else {
         snprintf(buf, sizeof(buf), "Alt  n/a");
     }
-    M5Dial.Display.drawString(buf, CX, lineY);   lineY += step;
+    _g->drawString(buf, CX, lineY);   lineY += step;
 
     // Row 3: speed (kts or km/h) + heading. The default font has no glyph at
     // all for the degree sign — a correct UTF-8 encoding still fell back to
@@ -240,14 +610,23 @@ void RadarDisplay::drawDetail(const Aircraft& ac) {
     // have it at all.
     int speed = metric ? (int)(ac.speedMs * 3.6f) : (int)(ac.speedMs * 1.94384f);
     snprintf(buf, sizeof(buf), "%d %s  %03.0f", speed, metric ? "km/h" : "kts", ac.heading);
-    M5Dial.Display.drawString(buf, CX, lineY);
-    int textW = M5Dial.Display.textWidth(buf);
-    M5Dial.Display.drawCircle(CX + textW / 2 + 5, lineY - 4, 2, COL_STATUS);
+    _g->drawString(buf, CX, lineY);
+    int textW = _g->textWidth(buf);
+    _g->drawCircle(CX + textW / 2 + 5, lineY - 4, 2, COL_STATUS);
     lineY += step;
 
     // Row 4: country / on-ground flag
     snprintf(buf, sizeof(buf), "%s%s", ac.country, ac.onGround ? "  [GND]" : "");
-    M5Dial.Display.drawString(buf, CX, lineY);
+    _g->drawString(buf, CX, lineY);
+}
+
+void RadarDisplay::drawFollowButton() {
+    _g->fillRoundRect(FBTN_X, FBTN_Y, FBTN_W, FBTN_H, 5, COL_OVERLAY);
+    _g->drawRoundRect(FBTN_X, FBTN_Y, FBTN_W, FBTN_H, 5, COL_SEL);
+    _g->setTextDatum(MC_DATUM);
+    _g->setTextSize(1);
+    _g->setTextColor(_following ? COL_HOME : COL_SEL, COL_OVERLAY);
+    _g->drawString(_following ? "STOP FOLLOW" : "FOLLOW", CX, FBTN_Y + FBTN_H / 2);
 }
 
 void RadarDisplay::flashEmergencyRing() {
@@ -265,7 +644,7 @@ void RadarDisplay::flashEmergencyRing() {
 }
 
 void RadarDisplay::drawPollIcon(unsigned long lastUpdateMs, bool fetching) {
-    auto& d = M5Dial.Display;
+    auto& d = *_g;
 
     // Dim track — full circle
     d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, 0, 360, COL_RING);
@@ -302,12 +681,17 @@ bool RadarDisplay::hitPollIcon(int tx, int ty) const {
     return (dx * dx + dy * dy) <= (22 * 22);
 }
 
+bool RadarDisplay::hitFollowButton(int tx, int ty) const {
+    return tx >= FBTN_X && tx <= FBTN_X + FBTN_W &&
+           ty >= FBTN_Y && ty <= FBTN_Y + FBTN_H;
+}
+
 void RadarDisplay::drawApiStatusOverlay() {
-    auto& d = M5Dial.Display;
+    auto& d = *_g;
     const ApiStatus& s = apiStatus();
 
-    d.fillRoundRect(28, 74, 184, 104, 8, COL_OVERLAY);
-    d.drawRoundRect(28, 74, 184, 104, 8, COL_SEL);
+    d.fillRoundRect(28, 66, 184, 124, 8, COL_OVERLAY);
+    d.drawRoundRect(28, 66, 184, 124, 8, COL_SEL);
 
     const char* label;
     uint16_t    col;
@@ -323,30 +707,43 @@ void RadarDisplay::drawApiStatusOverlay() {
     d.setTextDatum(MC_DATUM);
     d.setTextSize(1);
     d.setTextColor(COL_RING_LBL, COL_OVERLAY);
-    d.drawString("API STATUS", CX, 90);
+    d.drawString("API STATUS", CX, 78);
+
+    // Credential / tier indicator — whether an API key is configured and valid.
+    const char* authTxt;
+    uint16_t    authCol;
+    switch (s.auth) {
+        case ApiAuth::Authenticated: authTxt = "API KEY: VALID";      authCol = COL_RING_LBL; break;
+        case ApiAuth::Failed:        authTxt = "API KEY: INVALID";    authCol = COL_HOME;     break;
+        default:                     authTxt = "NO KEY - FREE TIER";  authCol = COL_STATUS;   break;
+    }
+    d.setTextColor(authCol, COL_OVERLAY);
+    d.drawString(authTxt, CX, 95);
 
     d.setTextSize(2);
     d.setTextColor(col, COL_OVERLAY);
-    d.drawString(label, CX, 112);
+    d.drawString(label, CX, 116);
 
     char buf[48];
     d.setTextSize(1);
     d.setTextColor(COL_STATUS, COL_OVERLAY);
 
     // Reason / aircraft count from the last attempt
-    d.drawString(s.detail[0] ? s.detail : "-", CX, 134);
+    d.drawString(s.detail[0] ? s.detail : "-", CX, 138);
 
     // HTTP code + payload size
     if (s.httpCode)
         snprintf(buf, sizeof(buf), "HTTP %d   %dB", s.httpCode, s.bytes);
     else
         snprintf(buf, sizeof(buf), "no request yet");
-    d.drawString(buf, CX, 150);
+    d.drawString(buf, CX, 154);
 
-    // Age of last attempt
+    // Age of last attempt + effective poll interval, so the chosen cadence is
+    // visible (e.g. "12s ago  every 22s").
     if (s.lastMs) {
         unsigned long age = (millis() - s.lastMs) / 1000UL;
-        snprintf(buf, sizeof(buf), "%lus ago", age);
-        d.drawString(buf, CX, 166);
+        snprintf(buf, sizeof(buf), "%lus ago  every %lus",
+                 age, refreshIntervalMs() / 1000UL);
+        d.drawString(buf, CX, 170);
     }
 }

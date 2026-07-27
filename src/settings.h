@@ -12,7 +12,7 @@ void loadSettings();
 // through everything needed to keep drawing the current radar frame
 // underneath it (main.cpp's own draw arguments).
 void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
-                  float homeLat, float homeLon, float radiusKm,
+                  float homeLat, float homeLon, float radiusKm, int zoomIdx,
                   unsigned long lastUpdateMs, bool fetching);
 
 bool buzzOnEmergency();
@@ -36,6 +36,11 @@ float minAltitudeM();
 
 bool showTrails();
 bool showRings();
+
+// Map background mode. Full = OSM raster tiles; Lo-fi = embedded vector coastlines/
+// borders/rivers + city labels (offline, themed lines); Off = plain background.
+enum MapMode { MAP_FULL = 0, MAP_LOFI = 1, MAP_OFF = 2 };
+int mapMode();
 
 // Auto-refresh interval, driven by the user-selectable "Refresh rate" setting.
 unsigned long refreshIntervalMs();

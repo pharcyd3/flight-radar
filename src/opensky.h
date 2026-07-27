@@ -14,8 +14,17 @@ enum class ApiState : uint8_t {
     NetError     // connection/DNS/TLS failure — never reached the server
 };
 
+// Which OpenSky tier the last request used — surfaced in the API status panel so
+// the user can see at a glance whether their API key is configured and working.
+enum class ApiAuth : uint8_t {
+    Anonymous,      // no credentials configured — OpenSky free/anonymous tier (400/day)
+    Authenticated,  // credentials configured and a valid OAuth2 token obtained (4000/day)
+    Failed          // credentials configured but authentication failed (bad key / token rejected)
+};
+
 struct ApiStatus {
     ApiState      state    = ApiState::Never;
+    ApiAuth       auth     = ApiAuth::Anonymous;
     int           httpCode = 0;      // last HTTP status (or negative HTTPClient err)
     int           bytes    = 0;      // Content-Length of last response, -1 if unknown
     unsigned long lastMs   = 0;      // millis() when the last attempt completed
