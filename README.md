@@ -1,4 +1,4 @@
-# FlightDial
+# Frank's Flight Radar
 
 A live aircraft radar for the [M5Stack M5Dial](https://docs.m5stack.com/en/core/M5Dial), built on real [OpenSky Network](https://opensky-network.org/) ADS-B data with an [OpenStreetMap](https://www.openstreetmap.org/) tile underlay.
 

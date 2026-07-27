@@ -1,10 +1,10 @@
 # Favourite Locations
 
-FlightDial can remember up to **three** favourite locations, so you can jump between (for example) home, work, and a family member's house without re-typing coordinates each time.
+Frank's Flight Radar can remember up to **three** favourite locations, so you can jump between (for example) home, work, and a family member's house without re-typing coordinates each time.
 
 ## Setting up favourites
 
-1. Open **Settings → Location & API Keys**. This opens the WiFi captive portal on `FlightDial-Setup` / `192.168.4.1`.
+1. Open **Settings → Location & API Keys**. This opens the WiFi captive portal on `Franks-Flight-Radar-Setup` / `192.168.4.1`.
 2. Alongside the home latitude/longitude fields, you'll find three favourite slots, each with a **name**, **latitude**, and **longitude**.
 3. Fill in whichever slots you want (leave a name blank to clear that slot), and save.
 
@@ -12,7 +12,7 @@ Coordinates are validated on save (must be within ±90° latitude / ±180° long
 
 ## Pre-caching
 
-As soon as you save named favourites, FlightDial immediately fetches and caches the map tiles for each one at the default zoom level (25&nbsp;km), showing a **"Caching maps..."** message while it works. This means that when you later switch to a favourite, its map appears instantly instead of fetching tiles live over the network. Favourites that are already cached are skipped (cheap no-op), so re-saving the form doesn't re-fetch anything unnecessarily.
+As soon as you save named favourites, Frank's Flight Radar immediately fetches and caches the map tiles for each one at the default zoom level (25&nbsp;km), showing a **"Caching maps..."** message while it works. This means that when you later switch to a favourite, its map appears instantly instead of fetching tiles live over the network. Favourites that are already cached are skipped (cheap no-op), so re-saving the form doesn't re-fetch anything unnecessarily.
 
 ## Switching to a favourite
 

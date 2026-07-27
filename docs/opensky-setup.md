@@ -1,6 +1,6 @@
 # OpenSky API Setup
 
-FlightDial can run without any account at all, but you'll want to set up a free OpenSky **API client** for reliable use. Here's why, and how.
+Frank's Flight Radar can run without any account at all, but you'll want to set up a free OpenSky **API client** for reliable use. Here's why, and how.
 
 ## Why you need this
 
@@ -12,7 +12,7 @@ OpenSky's REST API used to accept a plain username/password (HTTP Basic Auth). T
 | Standard authenticated client | 4,000 |
 | Active ADS-B feeder (≥30% uptime/month) | 8,000 |
 
-Each request to the live-state endpoint costs credits based on the geographic area of its bounding box (≤25&nbsp;sq° = 1 credit, up to 4 credits for a global query). At FlightDial's zoom levels (10–200&nbsp;km radius), a request almost always costs **1 credit**, regardless of zoom — see [Map & Caching](map-caching.md) for the exact numbers at your latitude.
+Each request to the live-state endpoint costs credits based on the geographic area of its bounding box (≤25&nbsp;sq° = 1 credit, up to 4 credits for a global query). At Frank's Flight Radar's zoom levels (10–200&nbsp;km radius), a request almost always costs **1 credit**, regardless of zoom — see [Map & Caching](map-caching.md) for the exact numbers at your latitude.
 
 At the default 30-second refresh rate, that's about **2,880 requests/day** — comfortably inside the standard authenticated budget, with no margin at all anonymously (400/day runs out in under two hours at that rate).
 
@@ -30,7 +30,7 @@ You have two options, both equally valid:
 
 1. Short-press the encoder button to open **Settings**.
 2. Rotate to **Location & API Keys** and press.
-3. This opens the same WiFi captive portal as first-boot setup, on the **`FlightDial-Setup`** network at `192.168.4.1` — but it does **not** erase your saved WiFi or location.
+3. This opens the same WiFi captive portal as first-boot setup, on the **`Franks-Flight-Radar-Setup`** network at `192.168.4.1` — but it does **not** erase your saved WiFi or location.
 4. Fill in **OpenSky client_id** and **OpenSky client_secret**, and save.
 
 The client_secret field is intentionally left blank when re-opening this form — leave it blank to keep the previously saved secret, or type a new one to replace it.
@@ -68,4 +68,4 @@ Under **Settings → Refresh rate** you can pick 10, 20, or 30 seconds. Only **3
 | 20 s | 4,320 | Barely over — risks throttling late in the day |
 | 30 s | 2,880 | Yes, with margin |
 
-If you only run FlightDial for a few hours at a time rather than continuously, faster refresh rates are fine.
+If you only run Frank's Flight Radar for a few hours at a time rather than continuously, faster refresh rates are fine.

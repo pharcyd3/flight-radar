@@ -55,8 +55,8 @@ Options: **Off** *(default)*, 1,000&nbsp;ft, 5,000&nbsp;ft, 10,000&nbsp;ft, 20,0
 
 | Value | Behaviour |
 |---|---|
-| **On** *(default)* | Airborne aircraft (over 5&nbsp;m/s ground speed) show a short line indicating their direction of travel |
-| Off | No heading lines |
+| **On** *(default)* | Airborne aircraft (over 5&nbsp;m/s ground speed) show a short arrow indicating their direction of travel, **and** the currently-selected aircraft leaves a fading breadcrumb trail of its recent positions |
+| Off | No heading arrows and no trails |
 
 ## Range rings
 
@@ -65,11 +65,28 @@ Options: **Off** *(default)*, 1,000&nbsp;ft, 5,000&nbsp;ft, 10,000&nbsp;ft, 20,0
 | **On** *(default)* | The three range rings, N tick, and range labels are drawn |
 | Off | Radar screen shows only the map, home crosshair, and aircraft |
 
+## Map
+
+The background style drawn beneath the radar.
+
+| Value | Behaviour |
+|---|---|
+| **Full** *(default)* | A real OpenStreetMap street map, fetched per location/zoom and cached to flash. See [Map & Caching](map-caching.md). |
+| Lo-fi | An **offline vector map** — coastlines, borders, rivers, and lakes as themed lines, plus labels for major cities. The whole world is embedded in the firmware, so it needs no network, switches instantly, and stays smooth while [following](using-the-device.md#following-an-aircraft) an aircraft. |
+| Off | A plain themed background (classic radar-scope look). |
+
+The lo-fi map is deliberately low-detail — it's meant as a lightweight geographic reference, not a street map.
+
 ## Refresh rate
 
-How often FlightDial polls OpenSky for updated positions: **10&nbsp;s**, **20&nbsp;s**, or **30&nbsp;s** *(default)*.
+How often Frank's Flight Radar polls OpenSky for updated positions.
 
-See [OpenSky API Setup](opensky-setup.md#choosing-a-refresh-rate) for why 30&nbsp;s is the only option that reliably lasts a full day under a standard authenticated account's quota.
+| Value | Behaviour |
+|---|---|
+| **Auto** *(default)* | Spreads the applicable daily quota evenly across 24&nbsp;hours — about every **22&nbsp;s** with an OpenSky API client, or every **240&nbsp;s** anonymously. Adapts automatically when you add or remove credentials. |
+| 10s / 20s / 30s | A fixed interval. |
+
+See [OpenSky API Setup](opensky-setup.md#choosing-a-refresh-rate) for the quota maths — **Auto** is the safest choice, and of the fixed rates only 30&nbsp;s reliably lasts a full day under a standard authenticated account's quota.
 
 ## Buzz on Emergency
 
@@ -80,9 +97,13 @@ See [OpenSky API Setup](opensky-setup.md#choosing-a-refresh-rate) for why 30&nbs
 
 See [Emergency Alerts](emergency-alerts.md) for details.
 
+## Detect location
+
+Re-detects your home location from the device's public IP address — no typing, no captive portal. Useful after moving, or as a quick way to re-centre. Accuracy is city-level and can be thrown off by a VPN; for a precise fix, use **Location & API Keys** (place-name search or manual coordinates) instead.
+
 ## Location & API Keys
 
-Opens the WiFi captive portal (`FlightDial-Setup` / `192.168.4.1`) to change your home coordinates, saved favourite locations, or OpenSky API credentials — **without** erasing your saved WiFi connection. See [Getting Started](getting-started.md) and [OpenSky API Setup](opensky-setup.md).
+Opens the WiFi captive portal (`Franks-Flight-Radar-Setup` / `192.168.4.1`) to change your home location, saved favourite locations, or OpenSky API credentials — **without** erasing your saved WiFi connection. You can set the location three ways: **leave it blank** to auto-detect from your network, type a **place name** (e.g. `Berlin`) to geocode it, or enter **coordinates** directly. See [Getting Started](getting-started.md) and [OpenSky API Setup](opensky-setup.md).
 
 ## Saved Locations
 

@@ -11,15 +11,21 @@
 flight-radar/
 ├── platformio.ini      # board config: esp32-s3-devkitc-1, 8MB flash, LittleFS
 ├── src/
-│   ├── main.cpp         # Arduino setup()/loop(), input handling, fetch scheduling
-│   ├── config.h         # tunable constants: zoom steps, encoder timing, refresh options
+│   ├── main.cpp         # Arduino setup()/loop(), input handling, fetch scheduling, follow mode
+│   ├── config.h         # tunable constants: zoom steps, encoder timing, refresh, interpolation, branding
 │   ├── aircraft.h       # Aircraft struct + emergency-squawk check
 │   ├── opensky.h/.cpp   # OAuth2 + REST client for OpenSky's /states/all endpoint
 │   ├── map.h/.cpp        # OSM tile fetch, compositing, and LittleFS caching
-│   ├── radar.h/.cpp      # all on-screen rendering (rings, aircraft, overlays, themes)
+│   ├── lofimap.h/.cpp    # reader for the embedded lo-fi vector map blob
+│   ├── geolocate.h/.cpp  # IP auto-detect + place-name geocoding
+│   ├── radar.h/.cpp      # all on-screen rendering (rings, aircraft, trails, lo-fi map, overlays, themes)
 │   ├── settings.h/.cpp   # settings menu UI + persisted settings state
 │   ├── provisioning.h/.cpp  # WiFiManager captive portal, NVS persistence, factory reset
 │   └── encoder_debounce.h  # rotary encoder debouncing (see its own extensive comments)
+├── assets/lofimap.bin   # embedded lo-fi vector map data (generated; linked into flash)
+├── tools/
+│   ├── build_lofimap.py  # regenerates lofimap.bin from Natural Earth GeoJSON
+│   └── embed_lofimap.py  # PlatformIO pre-build hook: objcopy the blob into the firmware
 ├── emulator/            # desktop (pygame) emulator mirroring the on-device UI
 ├── docs/                # this documentation site (MkDocs)
 └── mkdocs.yml
@@ -62,6 +68,17 @@ SETCREDS:<client_id>:<client_secret>
 ```
 
 Sets and persists OpenSky OAuth2 credentials without going through the WiFi captive portal — handy when iterating during development. See `checkSerialCommands()` in `main.cpp`.
+
+## Regenerating the lo-fi map data
+
+The [lo-fi vector map](map-caching.md#the-lo-fi-vector-map) is an embedded binary (`assets/lofimap.bin`, ~292&nbsp;KB) built from public-domain [Natural Earth](https://www.naturalearthdata.com/) 1:50m layers. It's committed to the repo, so a normal build just links it in — you only need to rebuild it to change the layers, detail, or city set:
+
+```bash
+# downloads the Natural Earth GeoJSON, simplifies + packs the blob
+python3 tools/build_lofimap.py --src <dir-with-geojson> --out assets/lofimap.bin
+```
+
+Tuning knobs live at the top of `tools/build_lofimap.py` (`TOL`, the per-layer Douglas–Peucker simplification tolerances). At build time, `tools/embed_lofimap.py` (a PlatformIO `pre:` script wired up in `platformio.ini`) `objcopy`s the blob into a linkable object exposing `_binary_lofimap_bin_start/_end`, which `lofimap.cpp` reads directly from flash — `board_build.embed_files` only works under the ESP-IDF framework, not the Arduino one used here.
 
 ## Hardware constraints worth knowing before changing things
 

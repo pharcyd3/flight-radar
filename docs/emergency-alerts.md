@@ -1,6 +1,6 @@
 # Emergency Alerts
 
-FlightDial watches every aircraft's transponder squawk code for the three internationally recognised emergency codes:
+Frank's Flight Radar watches every aircraft's transponder squawk code for the three internationally recognised emergency codes:
 
 | Code | Meaning |
 |---|---|

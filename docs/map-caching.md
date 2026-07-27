@@ -1,8 +1,10 @@
 # Map & Caching
 
+The **Map** setting (Settings → Map) chooses the background style: **Full** (the OpenStreetMap street map described below), **Lo-fi** (an offline vector map), or **Off** (a plain scope). This page is mostly about the Full raster map and its caching; the [lo-fi map](#the-lo-fi-vector-map) is covered at the end.
+
 ## Where the map comes from
 
-FlightDial renders a real street map underneath the radar rings and aircraft, built from [OpenStreetMap](https://www.openstreetmap.org/) raster tiles (`tile.openstreetmap.org`). There's no map for the *whole world* stored on the device — tiles are fetched for the current home location and zoom radius, stitched together, and composited into a 240×240 sprite that becomes the radar's background.
+Frank's Flight Radar renders a real street map underneath the radar rings and aircraft, built from [OpenStreetMap](https://www.openstreetmap.org/) raster tiles (`tile.openstreetmap.org`). There's no map for the *whole world* stored on the device — tiles are fetched for the current home location and zoom radius, stitched together, and composited into a 240×240 sprite that becomes the radar's background.
 
 ## Caching
 
@@ -16,11 +18,11 @@ Saved [favourite locations](favourite-locations.md) are pre-cached automatically
 
 ## Why tiles are decoded one at a time
 
-The M5Dial's ESP32-S3 has no PSRAM — the map sprite alone (115&nbsp;KB) plus PNG decode buffers plus the WiFi/TLS stack all have to share a ~320&nbsp;KB RAM budget. FlightDial streams each tile straight to a small flash-backed scratch file and decodes it directly from there, rather than holding a fully-buffered image in RAM, and the PNG decoder's own ~44&nbsp;KB working buffer is deliberately released again right after a map composes, so it doesn't sit around competing with the more frequent OpenSky network requests for the same scarce memory.
+The M5Dial's ESP32-S3 has no PSRAM — the map sprite alone (115&nbsp;KB) plus PNG decode buffers plus the WiFi/TLS stack all have to share a ~320&nbsp;KB RAM budget. Frank's Flight Radar streams each tile straight to a small flash-backed scratch file and decodes it directly from there, rather than holding a fully-buffered image in RAM, and the PNG decoder's own ~44&nbsp;KB working buffer is deliberately released again right after a map composes, so it doesn't sit around competing with the more frequent OpenSky network requests for the same scarce memory.
 
 ## Zoom levels and OpenSky credit cost
 
-FlightDial has five zoom levels: **10, 25, 50, 100, and 200&nbsp;km** radius. Each corresponds to a bounding box sent to OpenSky's API, and — per [OpenSky's credit model](opensky-setup.md) — the cost of a request depends on that box's geographic area:
+Frank's Flight Radar has five zoom levels: **10, 25, 50, 100, and 200&nbsp;km** radius. Each corresponds to a bounding box sent to OpenSky's API, and — per [OpenSky's credit model](opensky-setup.md) — the cost of a request depends on that box's geographic area:
 
 | Area | Credit cost |
 |---|---|
@@ -29,4 +31,19 @@ FlightDial has five zoom levels: **10, 25, 50, 100, and 200&nbsp;km** radius. Ea
 | 100–400&nbsp;sq° | 3 |
 | \>400&nbsp;sq° (global) | 4 |
 
-At most latitudes, even FlightDial's largest 200&nbsp;km zoom stays comfortably under the 25&nbsp;sq° threshold (1 credit per request). Longitude spans widen in degrees as you go further from the equator, though — at roughly **58.7°N (or S)** and beyond, a 200&nbsp;km-radius box crosses into the 2-credit tier, effectively halving your daily request budget if you use max zoom heavily from a high-latitude home location. If you've relocated your home coordinates somewhere far north or south, it's worth checking your device's serial log for the actual bounding box being requested to confirm which tier you're in.
+At most latitudes, even Frank's Flight Radar's largest 200&nbsp;km zoom stays comfortably under the 25&nbsp;sq° threshold (1 credit per request). Longitude spans widen in degrees as you go further from the equator, though — at roughly **58.7°N (or S)** and beyond, a 200&nbsp;km-radius box crosses into the 2-credit tier, effectively halving your daily request budget if you use max zoom heavily from a high-latitude home location. If you've relocated your home coordinates somewhere far north or south, it's worth checking your device's serial log for the actual bounding box being requested to confirm which tier you're in.
+
+*(Zoom-box credit cost is about the OpenSky **data** request and is unrelated to which map background you're using — it applies equally in Full, Lo-fi, and Off modes.)*
+
+## The lo-fi vector map
+
+Set **Map → Lo-fi** for a lightweight, offline alternative to the street map: **coastlines, national borders, rivers, and lakes** drawn as themed lines, with labels for **major cities**. Unlike the raster map, it has nothing to fetch or cache — the entire world (simplified [Natural Earth](https://www.naturalearthdata.com/) data, public domain) is **baked into the firmware** and rendered directly.
+
+That makes it a good fit when you want geographic context without the weight of the street map:
+
+- **Works anywhere, offline** — no tiles to download, so it's instant at every location and zoom, including places you've never visited.
+- **No "loading map…" pauses** and no credit or bandwidth cost.
+- **Smooth while following** — because there's nothing to recompose, [following an aircraft](using-the-device.md#following-an-aircraft) re-centres instantly, with none of the periodic map reloads the Full map does.
+- **Themed** — the lines recolour with your chosen [colour theme](settings-reference.md#colour-theme).
+
+It's deliberately **low-detail** — a scope-style geographic reference, not a substitute for the street map's roads and place detail. Coastlines are coarse and only larger towns are labelled.

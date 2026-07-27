@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FlightDial desktop emulator — mirrors the M5Dial radar app.
+"""Frank's Flight Radar desktop emulator — mirrors the M5Dial radar app.
 
 Controls:
   scroll wheel      = zoom in / out  (encoder rotation)
@@ -269,7 +269,7 @@ def fetch_aircraft(center_lat, center_lon, radius_km):
 # ── Map underlay (OpenStreetMap raster tiles, stitched + cropped) ───────────
 MAP_TILE_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "map_tile_cache")
 TILE_SIZE     = 256
-TILE_HEADERS  = {"User-Agent": "FlightDial-prototype/0.1 (personal project, contact: n/a)"}
+TILE_HEADERS  = {"User-Agent": "FranksFlightRadar-prototype/0.1 (personal project, contact: n/a)"}
 
 
 def _deg2tile_f(lat, lon, zoom):
@@ -395,7 +395,7 @@ class Emulator:
 
         pygame.init()
         self.screen = pygame.display.set_mode((WIN_W, WIN_H))
-        pygame.display.set_caption(f"FlightDial — {HOME_LAT:.4f}, {HOME_LON:.4f}")
+        pygame.display.set_caption(f"Frank's Flight Radar — {HOME_LAT:.4f}, {HOME_LON:.4f}")
 
         self.font_sm = pygame.font.SysFont("monospace", 11)
         self.font_xs = pygame.font.SysFont("monospace", 10)
@@ -671,7 +671,7 @@ class Emulator:
     # ── Location editing (Change Location / Saved Locations) ─────────────────
 
     def _on_home_changed(self):
-        pygame.display.set_caption(f"FlightDial — {HOME_LAT:.4f}, {HOME_LON:.4f}")
+        pygame.display.set_caption(f"Frank's Flight Radar — {HOME_LAT:.4f}, {HOME_LON:.4f}")
         self.map_tiles.clear()  # old-location tiles are wrong for the new home
         self._do_fetch(force=True)
         self._do_fetch_map(ZOOM_STEPS[self.zoom_idx])

@@ -1,5 +1,5 @@
-site_name: FlightDial
-site_description: User guide for FlightDial — an M5Dial live aircraft radar
+site_name: Frank's Flight Radar
+site_description: User guide for Frank's Flight Radar — an M5Dial live aircraft radar
 site_url: https://pharcyd3.github.io/flight-radar/
 repo_url: https://github.com/pharcyd3/flight-radar
 repo_name: pharcyd3/flight-radar
@@ -47,6 +47,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Features: features.md
   - Getting Started: getting-started.md
   - OpenSky API Setup: opensky-setup.md
   - Using the Device: using-the-device.md

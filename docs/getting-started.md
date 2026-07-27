@@ -28,29 +28,32 @@ pio run -t upload --upload-port /dev/cu.usbmodem101   # macOS example
 
 ## 2. First boot — WiFi & location setup
 
-On its very first boot (or after a factory reset), FlightDial has no saved WiFi credentials, so it starts its own setup access point and shows:
+On its very first boot (or after a factory reset), Frank's Flight Radar has no saved WiFi credentials, so it starts its own setup access point and shows:
 
 ```
 SETUP MODE
 Connect your phone to:
-FlightDial-Setup
+Franks-Flight-Radar-Setup
 then open:
 192.168.4.1
 ```
 
-1. On your phone or laptop, join the **`FlightDial-Setup`** WiFi network.
+1. On your phone or laptop, join the **`Franks-Flight-Radar-Setup`** WiFi network.
 2. Open **`192.168.4.1`** in a browser — this is [WiFiManager](https://github.com/tzapu/WiFiManager)'s captive portal.
 3. Choose **Configure WiFi**, select your home network, and enter its password.
 4. On the same form, you'll also see:
     - **OpenSky client_id** / **OpenSky client_secret** *(optional at this stage — see [OpenSky API Setup](opensky-setup.md))*
-    - **Home latitude** / **Home longitude** — the centre point of your radar. Use decimal degrees (e.g. `51.5007`, `-0.1246`). You can find your coordinates from any map application by long-pressing/right-clicking your location.
-5. Save. The device connects to your WiFi and reboots into the radar view.
+    - **Home location** — the centre point of your radar. You have three options, easiest first:
+        - **Leave everything blank** to have the device auto-detect your approximate location from your network once it's online (city-level; a VPN will throw it off).
+        - Type a **place name** in the *Place name* field (e.g. `Berlin`, `Paris, France`) — it's geocoded to coordinates after the device reconnects. A place name always wins over the coordinate fields.
+        - Enter **Home latitude** / **Home longitude** directly in decimal degrees (e.g. `51.5007`, `-0.1246`) for a precise fix. You can read these off any map app by long-pressing/right-clicking your location.
+5. Save. The device connects to your WiFi, resolves your location, and reboots into the radar view.
 
 If the portal times out (5 minutes) without a successful connection, the device restarts and re-opens the portal automatically.
 
 ## 3. You should now see the radar
 
-Once connected, FlightDial fetches its first batch of map tiles (a "loading map..." message appears briefly) and starts polling OpenSky. If you haven't set up API credentials yet, it runs **anonymously** — this works, but is quota-limited (see [OpenSky API Setup](opensky-setup.md) for why you'll want real credentials for reliable use).
+Once connected, Frank's Flight Radar fetches its first batch of map tiles (a "loading map..." message appears briefly) and starts polling OpenSky. If you haven't set up API credentials yet, it runs **anonymously** — this works, but is quota-limited (see [OpenSky API Setup](opensky-setup.md) for why you'll want real credentials for reliable use).
 
 ## Resetting later
 

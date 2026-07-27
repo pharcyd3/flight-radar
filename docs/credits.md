@@ -2,12 +2,12 @@
 
 ## Data sources
 
-- **Flight data** — [OpenSky Network](https://opensky-network.org/), a non-profit, community-driven ADS-B receiver network. FlightDial uses their public REST API under its [terms of use](https://opensky-network.org/about/terms-of-use).
+- **Flight data** — [OpenSky Network](https://opensky-network.org/), a non-profit, community-driven ADS-B receiver network. Frank's Flight Radar uses their public REST API under its [terms of use](https://opensky-network.org/about/terms-of-use).
 - **Map tiles** — © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, served via the standard OSM tile server. Please be considerate of [OSM's tile usage policy](https://operations.osmfoundation.org/policies/tiles/) if you modify tile-fetching behaviour.
 
 ## Libraries
 
-FlightDial is built on:
+Frank's Flight Radar is built on:
 
 - [M5Dial](https://github.com/m5stack/M5Dial) / [M5Unified](https://github.com/m5stack/M5Unified) / [M5GFX](https://github.com/m5stack/M5GFX) — M5Stack's hardware abstraction and graphics libraries
 - [ArduinoJson](https://arduinojson.org/) — JSON parsing, including its streaming filter feature used to keep heap usage down when parsing OpenSky responses

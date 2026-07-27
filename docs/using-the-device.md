@@ -1,16 +1,18 @@
 # Using the Device
 
-FlightDial has three inputs: the **rotary encoder** (twist and press), and the **touchscreen**. Here's what each does on the main radar screen.
+Frank's Flight Radar has three inputs: the **rotary encoder** (twist and press), and the **touchscreen**. Here's what each does on the main radar screen.
 
 ## The radar display
 
 - The **red crosshair** at the centre is your home location.
+- The **background** is one of three styles, set under Settings → Map: a real street map, an offline lo-fi vector map, or a plain scope. See [Settings Reference](settings-reference.md#map) and [Map & Caching](map-caching.md).
 - **Concentric rings** mark 25%, 50%, and 100% of the current zoom radius, with an **N** tick at the top and range labels on the right (toggle these off under Settings → Range rings).
 - Aircraft are drawn as dots with a short heading line, coloured by state:
     - White (or your theme's aircraft colour) — normal, airborne
     - Grey — on the ground
     - Orange — currently selected (tapped)
     - **Red, with an extra ring** — squawking an emergency code (7500/7600/7700); see [Emergency Alerts](emergency-alerts.md)
+- Aircraft **glide smoothly** between refreshes rather than jumping — their positions are dead-reckoned from heading and speed, so motion looks continuous even though OpenSky is only polled every 20&nbsp;s or so.
 - A small **poll icon** sits near the bottom of the screen: a shrinking ring counts down to the next automatic refresh, a solid ring means a request is in flight, and a **solid red ring** means the last request failed.
 
 ## Rotary encoder: zoom
@@ -22,6 +24,21 @@ Changing zoom triggers an immediate re-fetch at the new radius (and composes/loa
 ## Touch: select an aircraft
 
 **Tap an aircraft's dot** to open a detail panel showing its callsign, ICAO24 address, altitude, speed, heading, and country of registration. Tap the same aircraft again (or tap elsewhere) to dismiss it.
+
+While an aircraft is selected, it also leaves a short **trail** of its recent positions (a fading breadcrumb line), and the **rotary dial cycles the selection** through the other visible aircraft instead of zooming. Trails share the **Heading trails** setting — turn that off to hide both the heading arrows and the trail.
+
+## Following an aircraft
+
+To keep an aircraft centred as it flies, **follow** it:
+
+1. Tap the aircraft to select it and open its detail panel.
+2. Tap the **FOLLOW** button just above the panel.
+
+The radar re-centres on that aircraft and tracks it: a **reticle** marks the tracked point, your **home** becomes a small offset marker (so you can still tell which way home is), and a **FOLLOW &lt;callsign&gt;** banner appears near the top. Other traffic drifts past as the aircraft moves.
+
+- The **rotary dial zooms** while following (the selection is locked onto your target).
+- With the **Full** map, the background **re-centres lazily** — it stays put while the aircraft drifts within view, then snaps to re-centre once it wanders far enough, briefly reloading the map there. On the **Lo-fi** or **Off** background this is instant with no reload, so following feels smoothest there.
+- Following **ends** when you tap **STOP FOLLOW**, tap any other aircraft or empty space, open the API status panel, or the aircraft leaves coverage (lands, or flies out of range).
 
 ## Touch: check API status
 
