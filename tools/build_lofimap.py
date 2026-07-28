@@ -31,7 +31,8 @@ FILES = {
     "ne_50m_rivers_lake_centerlines.geojson":      LAYER_WATER,
     "ne_50m_lakes.geojson":                        LAYER_WATER,
 }
-PLACES = "ne_50m_populated_places_simple.geojson"
+PLACES   = "ne_50m_populated_places_simple.geojson"
+AIRPORTS = "ne_10m_airports.geojson"   # only exists at 1:10m; ~890 major airports
 
 
 def linestrings(geom):
@@ -139,9 +140,33 @@ def main():
     cities.sort()   # most prominent first
     print(f"  {PLACES}: {len(cities)} cities")
 
+    # Airports: labelled by IATA code (e.g. LHR), ranked by scalerank so the
+    # device can prefer the biggest hubs when several fall in view.
+    airports = []
+    with open(os.path.join(args.src, AIRPORTS)) as f:
+        gj = json.load(f)
+    for feat in gj["features"]:
+        pr = feat.get("properties", {})
+        code = transliterate(pr.get("iata_code") or pr.get("abbrev") or "")
+        if not code or len(code) > 4:
+            continue
+        lon, lat = feat["geometry"]["coordinates"][:2]
+        rank = int(pr.get("scalerank", 9) or 9)
+        airports.append((rank, code, lon, lat))
+    airports.sort()
+    print(f"  {AIRPORTS}: {len(airports)} airports")
+
+    # A city/airport record: i16 lon, i16 lat, u8 rank, u8 nameLen, name.
+    def point_record(lon, lat, rank, name):
+        qx = max(-32767, min(32767, round(lon * Q)))
+        qy = max(-32767, min(32767, round(lat * Q)))
+        nb = name.encode("ascii")
+        return struct.pack("<hhBB", qx, qy, min(rank, 255), len(nb)) + nb
+
     # ── pack ──
     buf = bytearray()
-    buf += struct.pack("<4sBBhII", b"LFM1", 1, 0, 32767, len(lines), len(cities))
+    buf += struct.pack("<4sBBhIII", b"LFM2", 2, 0, 32767,
+                       len(lines), len(cities), len(airports))
     npts = 0
     for layer, q in lines:
         xs = [p[0] for p in q]; ys = [p[1] for p in q]
@@ -150,15 +175,14 @@ def main():
             buf += struct.pack("<hh", qx, qy)
         npts += len(q)
     for rank, negpop, name, lon, lat in cities:
-        qx = max(-32767, min(32767, round(lon * Q)))
-        qy = max(-32767, min(32767, round(lat * Q)))
-        nb = name.encode("ascii")
-        buf += struct.pack("<hhBB", qx, qy, min(rank, 255), len(nb)) + nb
+        buf += point_record(lon, lat, rank, name)
+    for rank, code, lon, lat in airports:
+        buf += point_record(lon, lat, rank, code)
 
     with open(args.out, "wb") as f:
         f.write(buf)
 
-    print(f"\nlines={len(lines)}  points={npts}  cities={len(cities)}")
+    print(f"\nlines={len(lines)}  points={npts}  cities={len(cities)}  airports={len(airports)}")
     print(f"OUTPUT {args.out}: {len(buf)} bytes ({len(buf)/1024:.0f} KB)")
 
 

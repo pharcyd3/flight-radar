@@ -2,6 +2,8 @@
 #include "provisioning.h"
 #include "config.h"
 #include "radar.h"
+#include "lofimap.h"
+#include "map.h"
 #include "encoder_debounce.h"
 #include <M5Dial.h>
 #include <Preferences.h>
@@ -32,6 +34,7 @@ float minAltitudeM()          { return MIN_ALT_OPTIONS_M[_s.minalt]; }
 bool  showTrails()            { return _s.trails == 0; }
 bool  showRings()             { return _s.rings == 0; }
 int   mapMode()               { return _s.map <= MAP_OFF ? _s.map : MAP_FULL; }
+void  setMapMode(int m)       { if (m >= 0 && m <= MAP_OFF) _s.map = (uint8_t)m; }
 unsigned long refreshIntervalMs() {
     // "Auto" (index 0) spreads the applicable OpenSky daily budget across 24 h:
     // the faster authenticated cadence when a client_id is configured, the
@@ -93,6 +96,13 @@ static constexpr uint16_t S_OVERLAY = 0x0861;   // panel background
 static constexpr int PANEL_X = 20, PANEL_Y = 62, PANEL_W = 200, PANEL_H = 116;
 static constexpr int PANEL_CX = PANEL_X + PANEL_W / 2;
 
+// Settings panels composite into the shared map sprite (like the radar) and are
+// pushed in a single transfer — flicker-free, and captureable for the manual
+// (the GC9A01 panel can't be read back). Falls back to the display if no sprite.
+static LovyanGFX* panelG()  { return mapLayer.ready() ? (LovyanGFX*)mapLayer.sprite()
+                                                       : &M5Dial.Display; }
+static void       panelShow() { if (mapLayer.ready()) mapLayer.pushScene(); }
+
 // Redraws the live radar (map, rings, aircraft, poll icon) with no selection,
 // so settings panels sit on top of current, real content instead of a blank
 // screen — callers draw their panel immediately after this each frame.
@@ -104,7 +114,7 @@ static void drawBackdrop(RadarDisplay& radar, const std::vector<Aircraft>& aircr
 }
 
 static void panelFrame(const char* title, int page = 0, int numPages = 0) {
-    auto& d = M5Dial.Display;
+    auto& d = *panelG();
     d.fillRoundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 8, S_OVERLAY);
     d.drawRoundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 8, S_ORANGE);
 
@@ -154,6 +164,7 @@ static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& 
 static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
                                     float homeLat, float homeLon, float radiusKm, int zoomIdx,
                                     unsigned long lastUpdateMs, bool fetching);
+static void runSetLocation(RadarDisplay& radar);
 
 static const MenuItem MENU_ITEMS[] = {
     { "Flight labels",       ItemKind::Cycle,  OPTS_LABELS,  3, &_s.labels },
@@ -166,6 +177,7 @@ static const MenuItem MENU_ITEMS[] = {
     { "Map",                 ItemKind::Cycle,  OPTS_MAP,     3, &_s.map },
     { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, REFRESH_OPTION_COUNT, &_s.refresh },
     { "Buzz on Emergency",   ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.buzzEmergency },
+    { "Set location",        ItemKind::Action, nullptr,      0, nullptr },
     { "Detect location",     ItemKind::Action, nullptr,      0, nullptr },
     { "Location & API Keys", ItemKind::Action, nullptr,      0, nullptr },
     { "Saved Locations",     ItemKind::Action, nullptr,      0, nullptr },
@@ -184,7 +196,7 @@ static void drawMenuPanel(int idx) {
     if (end > MENU_COUNT) end = MENU_COUNT;
 
     panelFrame("SETTINGS", page, numPages);
-    auto& d = M5Dial.Display;
+    auto& d = *panelG();
 
     for (int i = start; i < end; i++) {
         int slot = i - start;
@@ -212,11 +224,12 @@ static void drawMenuPanel(int idx) {
     d.setTextColor(S_GREY, S_OVERLAY);
     d.drawString("rotate=move  press=select", PANEL_CX, PANEL_Y + PANEL_H - 18);
     d.drawString("tap=close", PANEL_CX, PANEL_Y + PANEL_H - 6);
+    panelShow();
 }
 
 static void drawLocationPickerPanel(int idx) {
     panelFrame("SAVED LOCATIONS");
-    auto& d = M5Dial.Display;
+    auto& d = *panelG();
     d.setTextDatum(MC_DATUM);
 
     for (int i = 0; i < FAV_COUNT; i++) {
@@ -232,6 +245,7 @@ static void drawLocationPickerPanel(int idx) {
     d.setTextColor(S_GREY, S_OVERLAY);
     d.drawString("rotate=move  press=activate", PANEL_CX, PANEL_Y + PANEL_H - 18);
     d.drawString("tap=cancel", PANEL_CX, PANEL_Y + PANEL_H - 6);
+    panelShow();
 }
 
 // Rotate to pick a saved favourite, press to make it the active home location.
@@ -265,6 +279,7 @@ static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& 
         if (M5Dial.BtnA.wasReleased()) {
             if (favName(idx)[0] != '\0') {
                 setHomeLocation(favLat(idx), favLon(idx));
+                if (mapMode() == MAP_FULL) mapLayer.precacheAll(favLat(idx), favLon(idx));
             }
             return;
         }
@@ -280,7 +295,7 @@ static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& 
 
 static void drawFactoryResetPanel(unsigned long heldMs) {
     panelFrame("FACTORY RESET");
-    auto& d = M5Dial.Display;
+    auto& d = *panelG();
     d.setTextDatum(MC_DATUM);
 
     d.setTextColor(S_GREY, S_OVERLAY);
@@ -296,6 +311,7 @@ static void drawFactoryResetPanel(unsigned long heldMs) {
 
     d.setTextColor(S_GREY, S_OVERLAY);
     d.drawString("hold=confirm  tap/release=cancel", PANEL_CX, PANEL_Y + PANEL_H - 8);
+    panelShow();
 }
 
 // Hold the button 3 s to confirm, matching the same gesture as the physical
@@ -348,6 +364,196 @@ static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircra
     }
 }
 
+// ── On-device "Set location" (drag the map, tap SET) ─────────────────────────
+
+// Pan/zoom radii for the set-location map, coarse (find your country) to fine
+// (place within a town). Rotating the dial steps through these.
+static const float SETLOC_RADII[] = { 1500.0f, 700.0f, 300.0f, 120.0f, 50.0f, 20.0f };
+static const int   SETLOC_COUNT   = sizeof(SETLOC_RADII) / sizeof(SETLOC_RADII[0]);
+
+// SET / SAVE buttons along the bottom (kept inside the round bezel's chord).
+static bool hitSetBtn(int x, int y) { return x >= 42 && x <= 116 && y >= 198 && y <= 224; }
+static bool hitFavBtn(int x, int y) { return x >= 124 && x <= 198 && y >= 198 && y <= 224; }
+
+// Buttons + readout composited into the pan-map sprite, then pushed in one frame.
+static void drawSetLocationOverlay(float lat, float lon, float km, const char* city) {
+    auto& d = *panelG();
+    d.setTextDatum(MC_DATUM);
+    d.setTextSize(1);
+
+    // Top info pill: nearest city + coordinates + current pan radius.
+    d.fillRoundRect(22, 6, 196, 34, 6, S_OVERLAY);
+    d.setTextColor(S_GREEN, S_OVERLAY);
+    char buf[40];
+    snprintf(buf, sizeof(buf), "near %s", city[0] ? city : "?");
+    d.drawString(buf, 120, 17);
+    d.setTextColor(S_GREY, S_OVERLAY);
+    snprintf(buf, sizeof(buf), "%.3f, %.3f  %.0fkm", lat, lon, km);
+    d.drawString(buf, 120, 31);
+
+    // Bottom buttons.
+    d.fillRoundRect(42, 198, 74, 26, 5, S_OVERLAY);
+    d.drawRoundRect(42, 198, 74, 26, 5, S_GREEN);
+    d.setTextColor(S_GREEN, S_OVERLAY);
+    d.drawString("SET HOME", 79, 211);
+
+    d.fillRoundRect(124, 198, 74, 26, 5, S_OVERLAY);
+    d.drawRoundRect(124, 198, 74, 26, 5, S_ORANGE);
+    d.setTextColor(S_ORANGE, S_OVERLAY);
+    d.drawString("SAVE FAV", 161, 211);
+    panelShow();
+}
+
+// Modal chooser: tap a slot to store (lat,lon) there; tap outside / button to cancel.
+static void runFavSlotChooser(float lat, float lon) {
+    auto& d = M5Dial.Display;
+    while (true) {
+        M5Dial.update();
+
+        d.fillRoundRect(30, 66, 180, 108, 8, S_OVERLAY);
+        d.drawRoundRect(30, 66, 180, 108, 8, S_ORANGE);
+        d.setTextDatum(MC_DATUM);
+        d.setTextSize(1);
+        d.setTextColor(S_GREEN, S_OVERLAY);
+        d.drawString("Save to which slot?", 120, 80);
+        for (int i = 0; i < FAV_COUNT; i++) {
+            int by = 100 + i * 22;
+            d.drawRoundRect(44, by - 9, 152, 18, 4, S_GREY);
+            char buf[40];
+            snprintf(buf, sizeof(buf), "Favourite %d  %s",
+                     i + 1, favName(i)[0] ? "(replace)" : "(empty)");
+            d.setTextColor(S_GREY, S_OVERLAY);
+            d.drawString(buf, 120, by);
+        }
+
+        auto t = M5Dial.Touch.getDetail();
+        if (t.wasPressed()) {
+            for (int i = 0; i < FAV_COUNT; i++) {
+                int by = 100 + i * 22;
+                if (t.x >= 44 && t.x <= 196 && t.y >= by - 9 && t.y <= by + 9) {
+                    char nm[24];
+                    snprintf(nm, sizeof(nm), "Favourite %d", i + 1);
+                    saveFavourite(i, nm, lat, lon);
+                    d.fillRoundRect(30, 66, 180, 108, 8, S_OVERLAY);
+                    d.setTextColor(S_GREEN, S_OVERLAY);
+                    d.drawString(nm, 120, 112);
+                    d.drawString("saved", 120, 128);
+                    delay(800);
+                    return;
+                }
+            }
+            // Tapped outside the panel — cancel.
+            if (!(t.x >= 30 && t.x <= 210 && t.y >= 66 && t.y <= 174)) return;
+        }
+        if (M5Dial.BtnA.wasReleased()) return;
+        delay(20);
+    }
+}
+
+static void runSetLocation(RadarDisplay& radar) {
+    float lat = homeLat();
+    float lon = homeLon();
+    int   idx = 2;   // start ~300 km (region level)
+
+    EncoderDebouncer enc;
+    enc.begin(ENC_STABLE_MS_MENU);
+
+    // Swallow the button press that opened this screen.
+    delay(200);
+    while (M5Dial.BtnA.isPressed()) { M5Dial.update(); delay(10); }
+
+    int  lastX = 0, lastY = 0, downX = 0, downY = 0;
+    bool onButton = false, moved = false;
+    bool dirty = true;
+    char city[24] = "";
+    unsigned long lastActivity = millis();
+
+    while (true) {
+        M5Dial.update();
+
+        // Dial: zoom the pan view (finer as you turn one way).
+        int dz;
+        if (enc.poll(&dz)) {
+            idx = constrain(idx + dz, 0, SETLOC_COUNT - 1);
+            dirty = true;
+            lastActivity = millis();
+        }
+
+        auto t = M5Dial.Touch.getDetail();
+        if (t.wasPressed()) {
+            lastX = downX = t.x;
+            lastY = downY = t.y;
+            onButton = hitSetBtn(t.x, t.y) || hitFavBtn(t.x, t.y);
+            moved = false;
+            lastActivity = millis();
+        } else if (t.isPressed()) {
+            int dx = t.x - lastX, dy = t.y - lastY;
+            if (!onButton && (dx != 0 || dy != 0)) {
+                // Drag the map: the point under the finger stays put, so the
+                // centre moves opposite. Convert screen pixels -> degrees.
+                float kmPerPx = SETLOC_RADII[idx] / 105.0f;   // PLOT_R
+                float cl = cosf(lat * (float)M_PI / 180.0f);
+                if (cl < 0.05f) cl = 0.05f;
+                lat += (dy * kmPerPx) / 111.0f;
+                lon -= (dx * kmPerPx) / (111.0f * cl);
+                if (lat >  85.0f) lat =  85.0f;
+                if (lat < -85.0f) lat = -85.0f;
+                if (lon > 180.0f) lon -= 360.0f;
+                if (lon < -180.0f) lon += 360.0f;
+                moved = true;
+                dirty = true;
+            }
+            lastX = t.x;
+            lastY = t.y;
+            lastActivity = millis();
+        } else if (t.wasReleased()) {
+            if (onButton && !moved) {
+                if (hitSetBtn(downX, downY)) {
+                    setHomeLocation(lat, lon);
+                    if (mapMode() == MAP_FULL) mapLayer.precacheAll(lat, lon);
+                    return;
+                }
+                if (hitFavBtn(downX, downY)) {
+                    runFavSlotChooser(lat, lon);
+                    dirty = true;
+                }
+            }
+            lastActivity = millis();
+        }
+
+        if (M5Dial.BtnA.wasReleased()) return;             // press = cancel
+        if (millis() - lastActivity > 45000UL) return;     // idle timeout
+
+        if (dirty) {
+            lofi::nearestCity(lat, lon, city, sizeof(city));
+            radar.drawLoFiPan(lat, lon, SETLOC_RADII[idx]);
+            drawSetLocationOverlay(lat, lon, SETLOC_RADII[idx], city);
+            dirty = false;
+        }
+        delay(8);
+    }
+}
+
+// ── Screenshot previews ──────────────────────────────────────────────────────
+// Render a single frame of a modal screen into the sprite (no interactive loop),
+// so the screenshot hooks can capture it. Both composite into the sprite and push.
+
+void renderSettingsPreview(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
+                            float homeLat, float homeLon, float radiusKm, int zoomIdx,
+                            unsigned long lastUpdateMs, bool fetching) {
+    loadSettings();
+    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
+    drawMenuPanel(0);
+}
+
+void renderSetLocationPreview(RadarDisplay& radar) {
+    float lat = homeLat(), lon = homeLon(), km = 300.0f;
+    char  city[24] = "";
+    lofi::nearestCity(lat, lon, city, sizeof(city));
+    radar.drawLoFiPan(lat, lon, km);
+    drawSetLocationOverlay(lat, lon, km, city);
+}
+
 void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
                   float homeLat, float homeLon, float radiusKm, int zoomIdx,
                   unsigned long lastUpdateMs, bool fetching) {
@@ -397,7 +603,9 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
                 continue;
             }
 
-            if (menuIdx == MENU_COUNT - 4) {         // Detect location (IP)
+            if (menuIdx == MENU_COUNT - 5) {         // Set location (on-device map)
+                runSetLocation(radar);
+            } else if (menuIdx == MENU_COUNT - 4) {  // Detect location (IP)
                 runDetectLocation();
             } else if (menuIdx == MENU_COUNT - 3) {  // Location & API Keys
                 runLocationPortal();

@@ -54,6 +54,12 @@ public:
     // repaint the current view); false if the tile was already cached.
     bool precache(float lat, float lon, float radiusKm);
 
+    // Compose + cache *every* zoom level for (lat,lon) up front, behind a
+    // "Loading maps N/M" progress screen — used on a location change so that all
+    // zoom levels (and a later lo-fi→full switch) are ready with no gaps once the
+    // loading screen clears. Already-cached levels are skipped (fast no-ops).
+    void precacheAll(float lat, float lon);
+
     // Wipes every cached map from flash. Not needed for correctness (the cache
     // is content-addressed by lat/lon/radius so stale entries are just inert),
     // but exposed for a manual "clear map cache" action if ever wanted.
@@ -73,6 +79,7 @@ private:
     bool  _haveMap      = false;
     bool  _decoderReady = false;   // is the pngle scratch buffer currently allocated?
     bool  _sceneDirty   = false;   // has the sprite been overdrawn since the last clean map load?
+    bool  _composeComplete = false;  // did the last compose() fetch every tile (safe to cache)?
     float _curLat = 999.0f, _curLon = 999.0f, _curR = -1.0f;
 
     bool loadCache(float lat, float lon, float r);

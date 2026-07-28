@@ -103,12 +103,16 @@ static const float INTERP_MAX_S        = 120.0f;  // cap extrapolation at 2 min
 
 // ── Position trails ─────────────────────────────────────────────────────────────
 // Breadcrumb history for the *selected* aircraft: the last few reported positions,
-// drawn as a fading polyline. Recorded for every tracked aircraft (matched across
-// polls by icao24) so a trail is ready the instant one is selected. Stored in a
-// fixed static buffer sized MAX_AIRCRAFT × TRAIL_LEN — a compile-time RAM cost in
-// BSS, never a heap allocation, so it can't fragment the contiguous free region
-// the TLS handshake and PNG decoder depend on.
-static const int TRAIL_LEN = 8;
+// drawn as a fading polyline. Only the selected aircraft's trail is ever drawn,
+// so we keep history for just a small pool of the most-recently-seen aircraft
+// (LRU eviction) rather than all of them — the selected one is seen every poll,
+// so it never gets evicted. Kept deliberately small: this is static RAM, and on
+// this no-PSRAM board every KB counts against the single contiguous block the TLS
+// handshake needs. Sizing it to MAX_AIRCRAFT (~9 KB) starved OpenSky's HTTPS
+// connection ("SSL - Memory allocation failed") — MAX_TRAILS × TRAIL_LEN is a
+// fraction of that.
+static const int TRAIL_LEN  = 8;
+static const int MAX_TRAILS = 20;
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 // Min-altitude filter thresholds, metres (Off, 1,000/5,000/10,000/20,000 ft).

@@ -2,6 +2,7 @@
 #include "config.h"
 #include "map.h"
 #include "geolocate.h"
+#include "settings.h"
 #include <M5Dial.h>
 #include <WiFiManager.h>
 #include <Preferences.h>
@@ -67,6 +68,23 @@ const char* favName(int i) { return _favName[i]; }
 float       favLat(int i)  { return _favLat[i]; }
 float       favLon(int i)  { return _favLon[i]; }
 
+void saveFavourite(int i, const char* name, float lat, float lon) {
+    if (i < 0 || i >= FAV_COUNT) return;
+    strncpy(_favName[i], name, sizeof(_favName[i]) - 1);
+    _favName[i][sizeof(_favName[i]) - 1] = '\0';
+    _favLat[i] = lat;
+    _favLon[i] = lon;
+
+    Preferences prefs;
+    prefs.begin("flightdial", /*readOnly=*/false);
+    char key[16];
+    snprintf(key, sizeof(key), "fav%d_name", i); prefs.putString(key, _favName[i]);
+    snprintf(key, sizeof(key), "fav%d_lat",  i); prefs.putFloat(key, _favLat[i]);
+    snprintf(key, sizeof(key), "fav%d_lon",  i); prefs.putFloat(key, _favLon[i]);
+    prefs.end();
+    Serial.printf("[Provision] Favourite %d saved: %s %.4f,%.4f\n", i, _favName[i], lat, lon);
+}
+
 // ── Display helpers (RGB565) ──────────────────────────────────────────────────
 static constexpr uint16_t C_BG     = 0x0008;
 static constexpr uint16_t C_GREEN  = 0x07E0;
@@ -127,6 +145,7 @@ static void resolvePendingLocation() {
         showGeoScreen("Finding place...");
         if (geocodeCity(_pendingPlace, lat, lon, place, sizeof(place))) {
             setHomeLocation(lat, lon);
+            if (mapMode() == MAP_FULL) mapLayer.precacheAll(lat, lon);
             showGeoScreen("Found:", place);
         } else {
             showGeoScreen("Place not found", "keeping location");
@@ -140,6 +159,7 @@ static void resolvePendingLocation() {
         showGeoScreen("Locating you...");
         if (ipGeolocate(lat, lon, place, sizeof(place))) {
             setHomeLocation(lat, lon);
+            if (mapMode() == MAP_FULL) mapLayer.precacheAll(lat, lon);
             showGeoScreen("Located:", place);
             delay(1400);
         }
@@ -155,6 +175,7 @@ bool runDetectLocation() {
     showGeoScreen("Locating you...");
     if (ipGeolocate(lat, lon, place, sizeof(place))) {
         setHomeLocation(lat, lon);
+        if (mapMode() == MAP_FULL) mapLayer.precacheAll(lat, lon);
         showGeoScreen("Located:", place[0] ? place : "position set");
         delay(1500);
         return true;
@@ -419,6 +440,11 @@ void runLocationPortal() {
 
     // Resolve a typed place name (or nothing) now that we're back online.
     resolvePendingLocation();
+
+    // Ensure every zoom level of the (possibly changed) home is composed up front
+    // so there are no gaps when switching zoom/map mode. No-op for already-cached
+    // levels; skipped unless the raster map is in use.
+    if (mapMode() == MAP_FULL) mapLayer.precacheAll(_homeLat, _homeLon);
 
     // Pre-cache each saved favourite's map at the default zoom radius so
     // switching to one via Settings > Saved Locations is instant instead of

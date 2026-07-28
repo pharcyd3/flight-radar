@@ -154,7 +154,17 @@ bool MapLayer::compose(float lat, float lon, float r) {
             int wtx = ((tx % (int)n) + (int)n) % (int)n;   // wrap at date line
             int wty = ((ty % (int)n) + (int)n) % (int)n;
 
-            if (!fetchTileToFile(client, http, z, wtx, wty, TILE_TMP_PATH)) { fail++; continue; }
+            // Retry each tile a few times: a single dropped/timed-out/throttled
+            // tile would otherwise leave a permanent grey gap once the map is
+            // cached. A fresh connection + short backoff between attempts recovers
+            // the transient failures (network blips, OSM rate-limiting, a starved
+            // TLS handshake) that were causing the black patches.
+            bool fetched = false;
+            for (int attempt = 0; attempt < 3 && !fetched; attempt++) {
+                if (attempt > 0) { client.stop(); delay(250); }
+                fetched = fetchTileToFile(client, http, z, wtx, wty, TILE_TMP_PATH);
+            }
+            if (!fetched) { fail++; continue; }
 
             int sx = (int)lround((tx * 256.0 - homeAbsX) * s + TARGET_PX / 2);
             int sy = (int)lround((ty * 256.0 - homeAbsY) * s + TARGET_PX / 2);
@@ -168,10 +178,17 @@ bool MapLayer::compose(float lat, float lon, float r) {
                 fail++;
                 Serial.printf("[Map] drawPngFile failed for tile %d/%d/%d\n", z, wtx, wty);
             }
+
+            delay(40);   // be polite to the OSM tile server between requests
         }
     }
 
     LittleFS.remove(TILE_TMP_PATH);
+
+    // A map is only worth caching if every tile made it in — otherwise we'd bake
+    // the grey gaps in permanently. Partial maps still display (better than a
+    // blank screen), but aren't saved, so they get another chance next time.
+    _composeComplete = (fail == 0 && ok > 0);
 
     // NOTE: we deliberately do NOT release the PNG decoder here (nor in the
     // OpenSky poll — see opensky.cpp). The decoder's scratch buffer is a single
@@ -189,7 +206,10 @@ bool MapLayer::compose(float lat, float lon, float r) {
 
 static String cachePath(float lat, float lon, float r) {
     char p[48];
-    snprintf(p, sizeof(p), "/m%.3f_%.3f_%d.565", lat, lon, (int)r);
+    // "m2_" prefix: bumped from the old "m" scheme so pre-existing caches (which
+    // may contain baked-in tile gaps from before the retry/complete-only logic)
+    // are treated as absent and rebuilt cleanly. Old files are evicted in time.
+    snprintf(p, sizeof(p), "/m2_%.3f_%.3f_%d.565", lat, lon, (int)r);
     return String(p);
 }
 
@@ -324,7 +344,7 @@ void MapLayer::ensure(float lat, float lon, float r) {
         M5Dial.Display.drawString("loading map...", 120, 120);
 
         if (compose(lat, lon, r)) {
-            saveCache(lat, lon, r);
+            if (_composeComplete) saveCache(lat, lon, r);   // don't cache gappy maps
             _haveMap = true;
         } else {
             _haveMap = false;   // no network/tiles — radar falls back to solid bg
@@ -380,12 +400,32 @@ bool MapLayer::precache(float lat, float lon, float r) {
     File existing = LittleFS.open(cachePath(lat, lon, r), "r");
     if (existing) { existing.close(); return false; }   // already cached — no work
 
-    if (compose(lat, lon, r)) saveCache(lat, lon, r);
+    if (compose(lat, lon, r) && _composeComplete) saveCache(lat, lon, r);
     _haveMap = false;   // force the next ensure() to reload for the real view
     _curR    = -1.0f;
     // We composed into the shared sprite and dropped the live-view state, so the
     // caller should repaint the current view (now a fast cache hit) afterwards.
     return true;
+}
+
+void MapLayer::precacheAll(float lat, float lon) {
+    if (!_ready) return;
+
+    for (int i = 0; i < ZOOM_COUNT; i++) {
+        M5Dial.Display.fillScreen(0x0000);
+        M5Dial.Display.setTextDatum(middle_center);
+        M5Dial.Display.setTextColor(0x7BEF, 0x0000);
+        char buf[24];
+        snprintf(buf, sizeof(buf), "Loading maps  %d/%d", i + 1, ZOOM_COUNT);
+        M5Dial.Display.drawString(buf, 120, 108);
+        M5Dial.Display.drawString("preparing zoom levels", 120, 128);
+        // Composes + caches this level if it isn't already (fast no-op if it is).
+        precache(lat, lon, ZOOM_STEPS[i]);
+    }
+    // precache() left the live-view state cleared, so the next ensure() reloads
+    // the current view (now a cache hit) for display.
+    _haveMap = false;
+    _curR    = -1.0f;
 }
 
 void MapLayer::invalidate() {

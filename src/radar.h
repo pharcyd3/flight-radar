@@ -37,10 +37,12 @@ public:
     void recordHistory(const std::vector<Aircraft>& aircraft);
 
     // ── Follow mode ──────────────────────────────────────────────────────────
-    // Tells the radar it's tracking an aircraft: draws a "FOLLOW <label>" banner,
-    // a centre reticle on the tracked point, and home as an offset marker (rather
-    // than the usual centred crosshair). following=false restores the home view.
-    void setFollow(bool following, float homeLat, float homeLon, const char* label);
+    // Tells the radar it's tracking an aircraft: centre reticle on the tracked
+    // point, home shown as an offset marker, and the UNFOLLOW/SHOW-OTHERS controls.
+    // `hideOthers` suppresses every aircraft except the tracked one, for an
+    // uncluttered chase. following=false restores the normal home-centred view.
+    void setFollow(bool following, float homeLat, float homeLon,
+                   const char* label, bool hideOthers);
 
     // Index of the aircraft with this icao24, or -1 if it isn't in the set.
     int findByIcao(const std::vector<Aircraft>& aircraft, const char* icao) const;
@@ -56,8 +58,20 @@ public:
     bool offCenter(float lat, float lon,
                    float centerLat, float centerLon, float radiusKm, float frac);
 
-    // True when a tap lands on the FOLLOW/STOP button shown in the detail panel.
+    // True when a tap lands on the FOLLOW button shown in the detail panel.
     bool hitFollowButton(int tx, int ty) const;
+
+    // True when a tap lands on the "UNFOLLOW <flight>" bar shown while following.
+    bool hitUnfollowButton(int tx, int ty) const;
+
+    // True when a tap lands on the SHOW/HIDE OTHERS toggle shown while following.
+    bool hitOthersButton(int tx, int ty) const;
+
+    // Renders the offline lo-fi map centred at (lat,lon) with a centre reticle,
+    // as the backdrop for the on-device "Set location" screen. Panning is cheap
+    // because it's vector, not raster. Pushes a full frame; the caller overlays
+    // its own buttons/labels on top afterwards.
+    void drawLoFiPan(float centerLat, float centerLon, float radiusKm);
 
     void drawBoot();
 
@@ -114,12 +128,19 @@ private:
                     int& sx, int& sy);
 
     void drawLoFiMap(float centerLat, float centerLon, float radiusKm);
+    // Airport markers + IATA codes — drawn over both the raster and lo-fi maps.
+    void drawAirports(float centerLat, float centerLon, float radiusKm);
+    // Records a label rect if it doesn't collide with one already placed this
+    // frame; returns true if it was placed (so the caller should draw the text).
+    bool placeLabel(int lx, int ly, int textW);
     void drawRings(float radiusKm);
     void drawZoomDots(int zoomIdx);
     void drawAircraft(const Aircraft& ac, int sx, int sy, bool selected);
     void drawTrail(const Aircraft& ac, float centerLat, float centerLon, float radiusKm);
     void drawDetail(const Aircraft& ac);
     void drawFollowButton();
+    void drawUnfollowBar();
+    void drawOthersButton();
     void drawPollIcon(unsigned long lastUpdateMs, bool fetching);
     void drawApiStatusOverlay();
 
@@ -135,12 +156,19 @@ private:
 
     // Follow-mode context (set by setFollow()). When active, the view is centred
     // on the tracked aircraft and home is drawn at _homeMark* instead.
-    bool  _following   = false;
-    float _homeMarkLat = 0.0f;
-    float _homeMarkLon = 0.0f;
-    char  _followLabel[12] = "";
+    bool  _following        = false;
+    bool  _followHideOthers = false;   // hide all but the tracked aircraft while following
+    float _homeMarkLat      = 0.0f;
+    float _homeMarkLon      = 0.0f;
+    char  _followLabel[12]  = "";
 
     bool _showStatus = false;
+
+    // Per-frame label-collision list, shared by city and airport labels so they
+    // don't overprint. Reset at the top of each draw().
+    struct LabelBox { int x0, y0, x1, y1; };
+    LabelBox _labels[16];
+    int      _nLabels = 0;
 
     static constexpr int CX     = 120;
     static constexpr int CY     = 120;
@@ -152,9 +180,22 @@ private:
     static constexpr int ICON_R  = 7;    // outer radius
     static constexpr int ICON_R0 = 4;    // inner radius (3 px ring)
 
-    // FOLLOW / STOP button — sits just above the detail pill (which starts y=148)
+    // FOLLOW button — sits just above the detail pill (which starts y=148)
     static constexpr int FBTN_X = 68;
     static constexpr int FBTN_Y = 126;
     static constexpr int FBTN_W = 104;
     static constexpr int FBTN_H = 20;
+
+    // UNFOLLOW <flight> bar — a single wide button along the bottom shown while
+    // following (replaces the detail panel, so the chase view stays uncluttered).
+    static constexpr int UFBTN_X = 40;
+    static constexpr int UFBTN_Y = 194;
+    static constexpr int UFBTN_W = 160;
+    static constexpr int UFBTN_H = 26;
+
+    // SHOW/HIDE OTHERS toggle — near the top while following (below the zoom dots).
+    static constexpr int OBTN_X = 55;
+    static constexpr int OBTN_Y = 40;
+    static constexpr int OBTN_W = 130;
+    static constexpr int OBTN_H = 22;
 };

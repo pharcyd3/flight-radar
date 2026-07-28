@@ -40,6 +40,15 @@ static bool  following       = false;
 static char  followIcao[8]   = "";
 static float followCenterLat = 0.0f;
 static float followCenterLon = 0.0f;
+// OpenSky data has transient gaps — an airborne aircraft can be absent from a
+// run of polls and reappear (sparse ADS-B coverage). Keep following through gaps
+// and only give up after this long with no sighting at all (time-based so it's
+// independent of the refresh rate).
+static unsigned long followLastSeenMs = 0;
+static const unsigned long FOLLOW_GRACE_MS = 90000UL;
+// Toggled by the SHOW/HIDE OTHERS button while following — hides all but the
+// tracked aircraft for an uncluttered chase.
+static bool  followHideOthers = false;
 
 static float viewLat() { return following ? followCenterLat : homeLat(); }
 static float viewLon() { return following ? followCenterLon : homeLon(); }
@@ -56,7 +65,7 @@ static const char* followLabel() {
 // Redraw the live radar with the current follow context applied. Single source
 // of truth for "paint the current frame" so every path stays consistent.
 static void redraw() {
-    radar.setFollow(following, homeLat(), homeLon(), followLabel());
+    radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers);
     radar.draw(aircraft, viewLat(), viewLon(), ZOOM_STEPS[zoomIdx], zoomIdx,
                selectedAc, lastUpdateMs, fetchInProgress);
 }
@@ -64,6 +73,8 @@ static void redraw() {
 static void startFollow(int idx) {
     if (idx < 0 || idx >= (int)aircraft.size()) return;
     following = true;
+    followHideOthers = false;   // start each chase showing all traffic
+    followLastSeenMs = millis();
     strncpy(followIcao, aircraft[idx].icao24, sizeof(followIcao) - 1);
     followIcao[sizeof(followIcao) - 1] = '\0';
     followCenterLat = aircraft[idx].lat;
@@ -78,24 +89,71 @@ static void stopFollow() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Debug/setup convenience: accepts `SETCREDS:<client_id>:<client_secret>\n`
-// over USB serial so OpenSky OAuth2 credentials can be set without going
-// through the WiFi captive portal. Local USB access only — same trust level
-// as flashing the device.
+static void doFetch();   // forward declaration (defined below)
+
+// Streams the composited radar frame over serial (RGB565, row order) framed by
+// SHOT_BEGIN/SHOT_END markers, so a host script can rebuild a PNG. The whole
+// radar scene is composited into the map sprite (the GC9A01 panel can't be read
+// back), so we dump that buffer after a fresh redraw.
+static bool screenshotPaused = false;   // freeze the loop so a posed frame persists
+
+static void captureScreenshot() {
+    auto* spr = mapLayer.sprite();
+    const uint8_t* buf = (const uint8_t*)spr->getBuffer();
+    Serial.printf("SHOT_BEGIN %d %d\n", 240, 240);
+    Serial.flush();
+    Serial.write(buf, 240 * 240 * 2);
+    Serial.flush();
+    Serial.print("\nSHOT_END\n");
+    Serial.flush();
+}
+
+// Debug/setup convenience over USB serial (local access only — same trust level
+// as flashing). Handles OpenSky credential entry (SETCREDS:) plus a set of
+// screenshot/pose hooks used to drive the device for the manual's screenshots.
 static void checkSerialCommands() {
     if (!Serial.available()) return;
     String line = Serial.readStringUntil('\n');
     line.trim();
-    if (!line.startsWith("SETCREDS:")) return;
+    if (line.isEmpty()) return;
 
-    int sep = line.indexOf(':', 9);
-    if (sep < 0) {
-        Serial.println("[Serial] SETCREDS malformed, expected SETCREDS:<id>:<secret>");
+    if (line.startsWith("SETCREDS:")) {
+        int sep = line.indexOf(':', 9);
+        if (sep < 0) {
+            Serial.println("[Serial] SETCREDS malformed, expected SETCREDS:<id>:<secret>");
+            return;
+        }
+        setOpenSkyCredentials(line.substring(9, sep).c_str(),
+                              line.substring(sep + 1).c_str());
         return;
     }
-    String cid = line.substring(9, sep);
-    String sec = line.substring(sep + 1);
-    setOpenSkyCredentials(cid.c_str(), sec.c_str());
+
+    // ── Screenshot / pose hooks ──────────────────────────────────────────────
+    if (line == "SHOT")      { captureScreenshot(); return; }
+    if (line == "PAUSE")     { screenshotPaused = true;  return; }
+    if (line == "RESUME")    { screenshotPaused = false; return; }
+    if (line == "SPLASH")    { radar.drawBoot(); return; }
+    if (line == "INFO") {
+        Serial.printf("INFO ac=%d zoom=%d map=%d sel=%d follow=%d hide=%d heap=%u\n",
+                      (int)aircraft.size(), zoomIdx, mapMode(), selectedAc,
+                      following ? 1 : 0, followHideOthers ? 1 : 0, ESP.getFreeHeap());
+        return;
+    }
+    if (line.startsWith("MAP:"))   { setMapMode(line.substring(4).toInt()); redraw(); return; }
+    if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, ZOOM_COUNT - 1);
+                                     lastFetchMs = 0; redraw(); return; }
+    if (line.startsWith("SEL:"))   { selectedAc = line.substring(4).toInt(); redraw(); return; }
+    if (line == "FOLLOW")    { if (selectedAc >= 0) startFollow(selectedAc); redraw(); return; }
+    if (line == "UNFOLLOW")  { stopFollow(); redraw(); return; }
+    if (line == "HIDE")      { followHideOthers = !followHideOthers; redraw(); return; }
+    if (line.startsWith("STATUS:")) { radar.setStatusVisible(line.substring(7).toInt() != 0); redraw(); return; }
+    if (line == "REFETCH")   { doFetch(); return; }
+    if (line == "MENU") {
+        renderSettingsPreview(radar, aircraft, homeLat(), homeLon(),
+                              ZOOM_STEPS[zoomIdx], zoomIdx, lastUpdateMs, fetchInProgress);
+        return;
+    }
+    if (line == "SETLOC")    { renderSetLocationPreview(radar); return; }
 }
 
 static void checkEmergency() {
@@ -125,6 +183,14 @@ static void checkEmergency() {
 static void doFetch() {
     float r = ZOOM_STEPS[zoomIdx];
 
+    // Remember the selected aircraft by icao24: fetchAircraft() rebuilds the
+    // vector (usually reordered, possibly shorter), so the bare index is stale
+    // afterwards — without this the selection jumps to a different plane or the
+    // detail panel vanishes on every poll.
+    char selIcao[8] = "";
+    if (selectedAc >= 0 && selectedAc < (int)aircraft.size())
+        strncpy(selIcao, aircraft[selectedAc].icao24, sizeof(selIcao) - 1);
+
     // Flip the poll icon into its "request in flight" look immediately,
     // before the (possibly slow) network call blocks everything else.
     fetchInProgress = true;
@@ -140,12 +206,20 @@ static void doFetch() {
     lastUpdateMs = millis();
     fetchInProgress = false;
 
-    // Re-lock the follow selection onto the target in the fresh set; if it's no
-    // longer there (landed / left coverage / filtered out), stop following.
+    // Re-locate the selection by icao24 in the fresh set (follow target takes
+    // precedence). While following, keep going through OpenSky coverage gaps and
+    // only give up after FOLLOW_GRACE_MS with no sighting at all.
     if (following) {
         int idx = radar.findByIcao(aircraft, followIcao);
-        if (idx < 0) { stopFollow(); selectedAc = -1; }
-        else         { selectedAc = idx; }
+        if (idx >= 0) {
+            selectedAc       = idx;
+            followLastSeenMs = millis();
+        } else {
+            selectedAc = -1;       // not seen this poll; view stays put
+            if (millis() - followLastSeenMs > FOLLOW_GRACE_MS) stopFollow();
+        }
+    } else if (selIcao[0]) {
+        selectedAc = radar.findByIcao(aircraft, selIcao);
     }
 
     // Outcome (incl. failures) is surfaced by the poll icon colour and the
@@ -238,6 +312,11 @@ void loop() {
     checkResetCombo();
     checkSerialCommands();
 
+    // Screenshot freeze: hold the current posed frame (no fetch/redraw/input) so
+    // it can be captured deterministically. Serial commands are still processed
+    // above, so PAUSE/SHOT/RESUME keep working.
+    if (screenshotPaused) return;
+
     if (settingsRequested()) {
         float r = ZOOM_STEPS[zoomIdx];
         runSettings(radar, aircraft, viewLat(), viewLon(), r, zoomIdx, lastUpdateMs, fetchInProgress);
@@ -285,22 +364,28 @@ void loop() {
     if (touch.wasPressed()) {
         lastInteractionMs = millis();
         float r = ZOOM_STEPS[zoomIdx];
-        if (radar.hitPollIcon(touch.x, touch.y)) {
+        if (following) {
+            // Follow is a mode: the only control is UNFOLLOW. Tapping anywhere
+            // else on the map does nothing, so the chase can't be dropped by an
+            // accidental tap. Unfollowing re-selects the plane so its detail panel
+            // (and FOLLOW button) come back.
+            if (radar.hitUnfollowButton(touch.x, touch.y)) {
+                selectedAc = radar.findByIcao(aircraft, followIcao);
+                stopFollow();
+            } else if (radar.hitOthersButton(touch.x, touch.y)) {
+                followHideOthers = !followHideOthers;   // toggle other traffic
+            }
+        } else if (radar.hitPollIcon(touch.x, touch.y)) {
             // Tap the poll icon to toggle the API status panel
             radar.setStatusVisible(!radar.statusVisible());
             selectedAc = -1;
-            stopFollow();
         } else if (selectedAc >= 0 && !radar.statusVisible() &&
                    radar.hitFollowButton(touch.x, touch.y)) {
-            // FOLLOW / STOP button in the detail panel toggles tracking.
-            if (following) stopFollow();
-            else           startFollow(selectedAc);
+            // FOLLOW button in the detail panel starts tracking (and hides the panel).
+            startFollow(selectedAc);
         } else {
             radar.setStatusVisible(false);   // any other tap dismisses the panel
-            // Hit-test against the current view centre before any follow exit
-            // changes it, so the tap lands where the marks are drawn.
             int hit = radar.hitTest(touch.x, touch.y, aircraft, viewLat(), viewLon(), r);
-            if (following) stopFollow();       // selecting anew leaves follow mode
             selectedAc = (hit == selectedAc) ? -1 : hit;  // tap again to deselect
         }
         // Immediate redraw after touch so it feels responsive
@@ -315,23 +400,15 @@ void loop() {
         doFetch();
     }
 
-    // ── Follow: lazy re-centre on the tracked aircraft ──────────────────────────
-    // The target drifts within the view (smoothly, via interpolation); once it
-    // wanders past ~45% of the plot radius, snap the centre back onto it. That
-    // recomposes the map at the new centre (OSM tiles only — not an OpenSky poll);
-    // the fetch box catches up at the next scheduled refresh.
+    // ── Follow: keep the tracked aircraft glued to the centre ───────────────────
+    // Continuously re-centre on the target's interpolated position, so it stays
+    // in the middle and the fetch box always travels with it (no lag that could
+    // let it slip out of coverage). The actual repaint happens at the animation
+    // cadence below; the lo-fi background used while following recentres for free.
     if (following) {
         int idx = radar.findByIcao(aircraft, followIcao);
-        if (idx >= 0) {
-            float ilat, ilon;
-            radar.interpPos(aircraft[idx], ilat, ilon);
-            if (radar.offCenter(ilat, ilon, followCenterLat, followCenterLon,
-                                ZOOM_STEPS[zoomIdx], 0.45f)) {
-                followCenterLat = aircraft[idx].lat;
-                followCenterLon = aircraft[idx].lon;
-                redraw();   // snap the view (and map) onto the target now
-            }
-        }
+        if (idx >= 0)
+            radar.interpPos(aircraft[idx], followCenterLat, followCenterLon);
     }
 
     // ── Periodic redraw (1 Hz — keeps the poll icon's countdown ticking) ─────
@@ -341,18 +418,19 @@ void loop() {
     // rings/labels to visibly flicker. The aircraft detail panel has no live
     // timer of its own, so it needs no periodic redraw at all — only a new
     // fetch or touch event changes it, both already handled elsewhere.
+    // Dead-reckoning animation: if anything airborne is moving, its mark has
+    // drifted since the last frame, so repaint the whole radar to let it glide
+    // between polls. draw() composites into one sprite and pushes it in a single
+    // transfer, so this full redraw is flicker-free. While following we redraw a
+    // little faster and always, to keep the tracked aircraft smoothly centred.
+    // Otherwise, when nothing's moving, just tick the poll-icon countdown.
     static unsigned long lastDrawMs = 0;
-    if (now - lastDrawMs >= 1000UL) {
+    unsigned long drawInterval = following ? 500UL : 1000UL;
+    if (now - lastDrawMs >= drawInterval) {
         lastDrawMs = now;
 
-        // Dead-reckoning animation: if anything airborne is moving, its mark has
-        // drifted since the last frame, so repaint the whole radar to let it glide
-        // between polls. draw() composites into one sprite and pushes it in a
-        // single transfer, so this full redraw is flicker-free (unlike the old
-        // push-then-overlay path, which is why this used to be icon-only). When
-        // nothing is moving — or a fetch/overlay is up — just tick the poll icon.
-        bool anyMoving = false;
-        if (!fetchInProgress && !radar.statusVisible()) {
+        bool anyMoving = following;
+        if (!anyMoving && !fetchInProgress && !radar.statusVisible()) {
             for (const Aircraft& ac : aircraft)
                 if (!ac.onGround && ac.speedMs >= INTERP_MIN_SPEED_MS) { anyMoving = true; break; }
         }

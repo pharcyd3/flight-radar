@@ -72,12 +72,12 @@ struct Trail {
     uint8_t  head     = 0;   // next write index (ring buffer)
     uint32_t lastSeen = 0;   // _fetchSeq when last updated — least-recent is evicted
 };
-Trail    _trails[MAX_AIRCRAFT];
+Trail    _trails[MAX_TRAILS];
 uint32_t _fetchSeq = 0;
 
 // Index of the trail slot for `icao`, or -1 if none is currently tracked.
 int trailSlot(const char* icao) {
-    for (int i = 0; i < MAX_AIRCRAFT; ++i)
+    for (int i = 0; i < MAX_TRAILS; ++i)
         if (_trails[i].count && strncmp(_trails[i].icao, icao, sizeof(_trails[i].icao)) == 0)
             return i;
     return -1;
@@ -177,10 +177,11 @@ int RadarDisplay::nextSelectable(int current, int dir,
 }
 
 void RadarDisplay::setFollow(bool following, float homeLat, float homeLon,
-                             const char* label) {
-    _following   = following;
-    _homeMarkLat = homeLat;
-    _homeMarkLon = homeLon;
+                             const char* label, bool hideOthers) {
+    _following        = following;
+    _followHideOthers = hideOthers;
+    _homeMarkLat      = homeLat;
+    _homeMarkLon      = homeLon;
     if (label) {
         strncpy(_followLabel, label, sizeof(_followLabel) - 1);
         _followLabel[sizeof(_followLabel) - 1] = '\0';
@@ -212,6 +213,7 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
                          int selectedIdx, unsigned long lastUpdateMs, bool fetching) {
     // Time base for dead-reckoning interpolation (see effectivePos()).
     _fetchMs = lastUpdateMs;
+    _nLabels = 0;   // reset the per-frame label-collision list (cities + airports)
 
     // Composite the whole frame into the off-screen map sprite and push it in one
     // transfer, so the frame is never seen half-drawn (the flicker the old
@@ -221,6 +223,13 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     _g = useSprite ? (LovyanGFX*)mapLayer.sprite() : &M5Dial.Display;
 
     int mm = mapMode();
+    // While following, never use the raster map: it would recompose ("loading
+    // map...") every time the tracked plane drifts into new tiles, which both
+    // interrupts the chase and competes with OpenSky for the scarce heap the
+    // HTTPS handshake needs (a failed poll then looks like the target vanished
+    // and drops the follow). The offline vector map re-centres instantly.
+    if (_following && mm == MAP_FULL) mm = MAP_LOFI;
+
     if (mm == MAP_FULL) {
         // beginScene() leaves the pristine map background in the sprite (loading
         // or restoring as needed); false means no map available → solid fill.
@@ -259,12 +268,19 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         _g->drawCircle(CX, CY, 3, COL_HOME);
     }
 
+    // Airports over the map (raster Full or Lo-fi), beneath the aircraft. The
+    // lo-fi path already draws its own city labels; airports are added on both.
+    if (mm != MAP_OFF) drawAirports(cLat, cLon, radiusKm);
+
     // Breadcrumb trail for the selected aircraft, drawn under the marks.
     if (showTrails() && selectedIdx >= 0 && selectedIdx < (int)aircraft.size())
         drawTrail(aircraft[selectedIdx], cLat, cLon, radiusKm);
 
     for (int i = 0; i < (int)aircraft.size(); ++i) {
         const Aircraft& ac = aircraft[i];
+
+        // "Hide others" while following: draw only the tracked aircraft.
+        if (_following && _followHideOthers && i != selectedIdx) continue;
 
         // Filter first (cheap), then a single projection — reused for the
         // inside-circle test and the mark, instead of projecting twice.
@@ -277,23 +293,16 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         drawAircraft(ac, sx, sy, i == selectedIdx);
     }
 
-    // "FOLLOW <callsign>" banner while tracking.
-    if (_following) {
-        char b[24];
-        snprintf(b, sizeof(b), "FOLLOW %s", _followLabel);
-        _g->setTextDatum(MC_DATUM);
-        _g->setTextSize(1);
-        _g->setTextColor(COL_SEL, COL_BG);
-        _g->drawString(b, CX, 48);
-    }
-
     drawPollIcon(lastUpdateMs, fetching);
 
     if (_showStatus) {
         drawApiStatusOverlay();          // status panel takes precedence
+    } else if (_following) {
+        drawUnfollowBar();               // chase view controls
+        drawOthersButton();
     } else if (selectedIdx >= 0 && selectedIdx < (int)aircraft.size()) {
         drawDetail(aircraft[selectedIdx]);
-        drawFollowButton();              // FOLLOW/STOP control above the detail pill
+        drawFollowButton();              // FOLLOW control above the detail pill
     }
 
     if (useSprite) mapLayer.pushScene();
@@ -341,7 +350,7 @@ void RadarDisplay::recordHistory(const std::vector<Aircraft>& aircraft) {
             // No slot yet — take a free one, else evict the least-recently-seen.
             int oldest = 0;
             uint32_t oldestSeen = 0xFFFFFFFFu;
-            for (int i = 0; i < MAX_AIRCRAFT; ++i) {
+            for (int i = 0; i < MAX_TRAILS; ++i) {
                 if (_trails[i].count == 0) { slot = i; break; }
                 if (_trails[i].lastSeen < oldestSeen) { oldestSeen = _trails[i].lastSeen; oldest = i; }
             }
@@ -370,7 +379,11 @@ void RadarDisplay::recordHistory(const std::vector<Aircraft>& aircraft) {
 }
 
 void RadarDisplay::drawBoot() {
-    auto& d = M5Dial.Display;
+    // Composite into the sprite and push (like draw()), so the splash can also be
+    // captured for screenshots — the panel itself can't be read back.
+    bool useSprite = mapLayer.ready();
+    _g = useSprite ? (LovyanGFX*)mapLayer.sprite() : &M5Dial.Display;
+    auto& d = *_g;
     d.fillScreen(COL_BG);
     d.setTextDatum(MC_DATUM);
 
@@ -394,6 +407,8 @@ void RadarDisplay::drawBoot() {
     d.setTextSize(2);
     d.drawString("Frank's", CX, CY + 30);
     d.drawString("Flight Radar", CX, CY + 54);
+
+    if (useSprite) mapLayer.pushScene();
 }
 
 // ── Private ──────────────────────────────────────────────────────────────────
@@ -437,12 +452,11 @@ void RadarDisplay::drawLoFiMap(float cLat, float cLon, float radiusKm) {
         }
     }
 
-    // ── Cities: dots + de-collided labels (blob is rank-sorted, biggest first) ──
-    struct Rect { int x0, y0, x1, y1; };
-    Rect placed[8];
-    int  nPlaced = 0, dots = 0;
+    // ── Cities: dots + de-collided labels (blob is rank-sorted, biggest first).
+    // Reserve most of the shared label budget for airports (placed afterwards) ──
     const uint8_t* c = lofi::citiesBegin();
     lofi::City C;
+    int dots = 0;
     for (uint32_t i = 0; i < lofi::cityCount() && dots < 40; ++i) {
         c = lofi::readCity(c, C);
         float lon = C.lon * u, lat = C.lat * u;
@@ -461,22 +475,92 @@ void RadarDisplay::drawLoFiMap(float cLat, float cLon, float radiusKm) {
         memcpy(nm, C.name, nl);
         nm[nl] = '\0';
 
-        int  lx = sx + 3, ly = sy - 3;
-        Rect r{ lx - 1, ly - 5, lx + nl * 6, ly + 5 };
-        bool clash = false;
-        for (int j = 0; j < nPlaced; ++j) {
-            Rect& q = placed[j];
-            if (!(r.x1 < q.x0 || r.x0 > q.x1 || r.y1 < q.y0 || r.y0 > q.y1)) { clash = true; break; }
-        }
-        if (!clash && nPlaced < 8) {
+        if (_nLabels < 8 && placeLabel(sx + 3, sy - 3, nl * 6)) {
             _g->setTextDatum(ML_DATUM);
             _g->setTextSize(1);
             _g->setTextColor(COL_STATUS, COL_BG);
-            _g->drawString(nm, lx, ly);
-            placed[nPlaced++] = r;
+            _g->drawString(nm, sx + 3, sy - 3);
         }
     }
     _g->setTextDatum(MC_DATUM);   // restore the default datum for later text
+}
+
+bool RadarDisplay::placeLabel(int lx, int ly, int textW) {
+    LabelBox r{ lx - 1, ly - 5, lx + textW, ly + 5 };
+    for (int j = 0; j < _nLabels; ++j) {
+        LabelBox& q = _labels[j];
+        if (!(r.x1 < q.x0 || r.x0 > q.x1 || r.y1 < q.y0 || r.y0 > q.y1)) return false;
+    }
+    if (_nLabels >= (int)(sizeof(_labels) / sizeof(_labels[0]))) return false;
+    _labels[_nLabels++] = r;
+    return true;
+}
+
+// Airports: a bold square marker + IATA code in the accent colour, distinct from
+// the round city dots. Drawn over both the raster and lo-fi maps (the key
+// landmarks for a flight radar). Shares the frame's label-collision budget.
+void RadarDisplay::drawAirports(float cLat, float cLon, float radiusKm) {
+    if (!lofi::ready()) return;
+
+    float cosLat = cosf(cLat * (float)M_PI / 180.0f);
+    if (cosLat < 0.01f) cosLat = 0.01f;
+    float dLat = (radiusKm / KM_PER_DEG) * 1.15f;
+    float dLon = (radiusKm / (KM_PER_DEG * cosLat)) * 1.15f;
+    float vMinLon = cLon - dLon, vMaxLon = cLon + dLon;
+    float vMinLat = cLat - dLat, vMaxLat = cLat + dLat;
+    float u = lofi::degPerUnit();
+
+    const uint8_t* ap = lofi::airportsBegin();
+    lofi::City A;   // airports share the city record layout; A.name is the IATA code
+    int adots = 0;
+    for (uint32_t i = 0; i < lofi::airportCount() && adots < 24; ++i) {
+        ap = lofi::readCity(ap, A);
+        float lon = A.lon * u, lat = A.lat * u;
+        if (lon < vMinLon || lon > vMaxLon || lat < vMinLat || lat > vMaxLat) continue;
+
+        int sx, sy;
+        worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
+        int ddx = sx - CX, ddy = sy - CY;
+        if (ddx * ddx + ddy * ddy > PLOT_R * PLOT_R) continue;
+
+        _g->fillRect(sx - 3, sy - 3, 6, 6, COL_HALO);   // dark halo for contrast
+        _g->fillRect(sx - 2, sy - 2, 4, 4, COL_SEL);
+        ++adots;
+
+        char code[8];
+        int  cl = A.nameLen < 6 ? A.nameLen : 6;
+        memcpy(code, A.name, cl);
+        code[cl] = '\0';
+
+        if (placeLabel(sx + 5, sy - 4, cl * 6)) {
+            _g->setTextDatum(ML_DATUM);
+            _g->setTextSize(1);
+            _g->setTextColor(COL_SEL, COL_BG);
+            _g->drawString(code, sx + 5, sy - 4);
+        }
+    }
+    _g->setTextDatum(MC_DATUM);
+}
+
+void RadarDisplay::drawLoFiPan(float cLat, float cLon, float radiusKm) {
+    bool useSprite = mapLayer.ready();
+    _g = useSprite ? (LovyanGFX*)mapLayer.sprite() : &M5Dial.Display;
+
+    _g->fillScreen(COL_BG);
+    if (useSprite) mapLayer.markSceneDirty();
+    _nLabels = 0;
+    drawLoFiMap(cLat, cLon, radiusKm);   // themed vector lines + city labels
+    drawAirports(cLat, cLon, radiusKm);  // airport markers + IATA codes
+
+    // Centre reticle — where the crosshair lands becomes the chosen location.
+    _g->drawCircle(CX, CY, 7, COL_SEL);
+    _g->drawLine(CX - 12, CY, CX - 4, CY, COL_SEL);
+    _g->drawLine(CX + 4, CY, CX + 12, CY, COL_SEL);
+    _g->drawLine(CX, CY - 12, CX, CY - 4, COL_SEL);
+    _g->drawLine(CX, CY + 4, CX, CY + 12, COL_SEL);
+    _g->fillCircle(CX, CY, 2, COL_HOME);
+
+    if (useSprite) mapLayer.pushScene();
 }
 
 void RadarDisplay::drawRings(float radiusKm) {
@@ -625,8 +709,29 @@ void RadarDisplay::drawFollowButton() {
     _g->drawRoundRect(FBTN_X, FBTN_Y, FBTN_W, FBTN_H, 5, COL_SEL);
     _g->setTextDatum(MC_DATUM);
     _g->setTextSize(1);
-    _g->setTextColor(_following ? COL_HOME : COL_SEL, COL_OVERLAY);
-    _g->drawString(_following ? "STOP FOLLOW" : "FOLLOW", CX, FBTN_Y + FBTN_H / 2);
+    _g->setTextColor(COL_SEL, COL_OVERLAY);
+    _g->drawString("FOLLOW", CX, FBTN_Y + FBTN_H / 2);
+}
+
+void RadarDisplay::drawUnfollowBar() {
+    _g->fillRoundRect(UFBTN_X, UFBTN_Y, UFBTN_W, UFBTN_H, 6, COL_OVERLAY);
+    _g->drawRoundRect(UFBTN_X, UFBTN_Y, UFBTN_W, UFBTN_H, 6, COL_HOME);
+    _g->setTextDatum(MC_DATUM);
+    _g->setTextSize(1);
+    _g->setTextColor(COL_HOME, COL_OVERLAY);
+    char buf[24];
+    snprintf(buf, sizeof(buf), "UNFOLLOW %s", _followLabel);
+    _g->drawString(buf, CX, UFBTN_Y + UFBTN_H / 2);
+}
+
+void RadarDisplay::drawOthersButton() {
+    _g->fillRoundRect(OBTN_X, OBTN_Y, OBTN_W, OBTN_H, 5, COL_OVERLAY);
+    _g->drawRoundRect(OBTN_X, OBTN_Y, OBTN_W, OBTN_H, 5, COL_SEL);
+    _g->setTextDatum(MC_DATUM);
+    _g->setTextSize(1);
+    _g->setTextColor(COL_SEL, COL_OVERLAY);
+    _g->drawString(_followHideOthers ? "SHOW OTHERS" : "HIDE OTHERS",
+                   OBTN_X + OBTN_W / 2, OBTN_Y + OBTN_H / 2);
 }
 
 void RadarDisplay::flashEmergencyRing() {
@@ -684,6 +789,16 @@ bool RadarDisplay::hitPollIcon(int tx, int ty) const {
 bool RadarDisplay::hitFollowButton(int tx, int ty) const {
     return tx >= FBTN_X && tx <= FBTN_X + FBTN_W &&
            ty >= FBTN_Y && ty <= FBTN_Y + FBTN_H;
+}
+
+bool RadarDisplay::hitUnfollowButton(int tx, int ty) const {
+    return tx >= UFBTN_X && tx <= UFBTN_X + UFBTN_W &&
+           ty >= UFBTN_Y && ty <= UFBTN_Y + UFBTN_H;
+}
+
+bool RadarDisplay::hitOthersButton(int tx, int ty) const {
+    return tx >= OBTN_X && tx <= OBTN_X + OBTN_W &&
+           ty >= OBTN_Y && ty <= OBTN_Y + OBTN_H;
 }
 
 void RadarDisplay::drawApiStatusOverlay() {

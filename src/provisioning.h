@@ -44,6 +44,10 @@ float homeLon();
 // Used when the user picks a saved favourite from the settings menu.
 void setHomeLocation(float lat, float lon);
 
+// Stores a favourite slot (0..FAV_COUNT-1) and persists it — used by the
+// on-device "Set location" screen to save a spot without the captive portal.
+void saveFavourite(int slot, const char* name, float lat, float lon);
+
 // Up to 3 saved favourite locations (name + lat/lon), edited via the
 // "Change Location" portal and selectable from the on-device Settings menu.
 // An empty name means the slot hasn't been set yet.
