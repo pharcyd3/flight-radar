@@ -60,7 +60,7 @@ static bool  followHideOthers = false;
 static bool  followRouteResolved      = false;
 static bool  followHaveRoute          = false;
 static int   followRouteLookupTries   = 0;
-static const int FOLLOW_ROUTE_MAX_TRIES = 5;   // give up if the callsign never appears
+static const int FOLLOW_ROUTE_MAX_TRIES = 10;   // give up if the real callsign never appears
 static float followOriginLat = 0, followOriginLon = 0;
 static float followDestLat   = 0, followDestLon   = 0;
 static char  followOriginCode[8] = "", followDestCode[8] = "";
@@ -136,7 +136,7 @@ static void stopFollow() {
     followIcao[0] = '\0';
 }
 
-// Attempts (once per follow session, retried across a few polls until the
+// Attempts (once per follow session, retried across a few polls until the real
 // callsign is known) to resolve the followed flight's route via adsbdb. Called
 // from doFetch() after a successful poll — a blocking HTTPS call, but a one-off,
 // same cost class as a map compose. Silently gives up if the callsign never
@@ -145,13 +145,21 @@ static void maybeResolveFollowRoute() {
     if (!following || followRouteResolved) return;
 
     int idx = radar.findByIcao(aircraft, followIcao);
-    const char* cs = (idx >= 0) ? aircraft[idx].callsign : nullptr;
-    if (!cs || !cs[0]) {
+    const Aircraft* ac = (idx >= 0) ? &aircraft[idx] : nullptr;
+    // Both data sources fall back to the bare ICAO24 hex as the callsign when the
+    // real one hasn't been broadcast yet (common right after a flight is first
+    // seen) — so ac->callsign is never actually empty, and checking only for
+    // non-empty fired the lookup immediately with that hex string, got a 404, and
+    // gave up before the real callsign ever showed up a few polls later. Compare
+    // against icao24 to detect the fallback and keep waiting for the real one.
+    bool haveRealCallsign = ac && ac->callsign[0] &&
+                            strncmp(ac->callsign, ac->icao24, sizeof(ac->icao24)) != 0;
+    if (!haveRealCallsign) {
         if (++followRouteLookupTries >= FOLLOW_ROUTE_MAX_TRIES) followRouteResolved = true;
         return;
     }
 
-    followHaveRoute = fetchFlightRoute(cs,
+    followHaveRoute = fetchFlightRoute(ac->callsign,
         followOriginLat, followOriginLon, followOriginCode, sizeof(followOriginCode),
         followDestLat,   followDestLon,   followDestCode,   sizeof(followDestCode));
     followRouteResolved = true;   // resolved either way — don't hammer adsbdb every poll
