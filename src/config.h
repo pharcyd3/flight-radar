@@ -24,22 +24,28 @@ static const float ZOOM_STEPS[]  = { 10.0f, 25.0f, 50.0f, 100.0f, 200.0f };
 static const int   ZOOM_COUNT    = 5;
 static const int   ZOOM_DEFAULT  = 1;   // start at 25 km
 
-// Extended zoom range available only in follow mode: the first five match
-// ZOOM_STEPS (so entering follow keeps the current view), then continue out to a
-// whole-earth view. Follow renders on the offline lo-fi vector map, so the extra
-// levels cost nothing to draw; the data fetch stays bounded (see FETCH_MAX_KM) —
-// we keep pulling the tracked aircraft's local traffic while the map zooms out.
-// 20000 km ≈ half the earth's circumference, so the antipode sits at the plot
-// edge: the whole globe fills the radar circle.
-static const float FOLLOW_ZOOM_STEPS[] = {
-    10.0f, 25.0f, 50.0f, 100.0f, 200.0f, 500.0f, 1200.0f, 3000.0f, 8000.0f, 20000.0f
-};
-static const int   FOLLOW_ZOOM_COUNT   = 10;
+// ── Follow-mode route view ───────────────────────────────────────────────────
+// While following an aircraft whose route is known (see routelookup.h), the
+// display zooms out just enough to fit both the departure and destination
+// airports around the plane's current position — no manual zoom needed, and it
+// naturally zooms back in as the flight nears arrival. Clamped so a very long
+// route doesn't zoom out absurdly far, and a very short hop doesn't zoom in
+// tighter than the normal closest step.
+static const float FOLLOW_ROUTE_MIN_KM = 10.0f;
+static const float FOLLOW_ROUTE_MAX_KM = 9000.0f;
+static const float FOLLOW_ROUTE_MARGIN = 1.25f;   // headroom so endpoints aren't at the rim
 
 // Cap on the OpenSky/airplanes.live fetch radius regardless of display zoom, so
-// zooming the map out (in follow mode) never balloons the request. airplanes.live
-// allows up to 250 nm (~463 km); OpenSky bounding boxes stay modest too.
+// the route view (which can be zoomed out far beyond a normal step) never
+// balloons the data request — we only need the tracked aircraft's local traffic.
+// airplanes.live allows up to 250 nm (~463 km); OpenSky bounding boxes stay
+// modest too.
 static const float FETCH_MAX_KM = 460.0f;
+
+// Number of points sampled along the great-circle route line (see routelookup.h/
+// radar.cpp drawRoute()) — precomputed once when a route resolves, then just
+// re-projected each frame as the view moves. More points = smoother curve.
+static const int ROUTE_POINTS = 40;
 
 // ── Rotary encoder ────────────────────────────────────────────────────────────
 // M5Dial's rotary reports 4 raw quadrature ticks per physical detent/click.

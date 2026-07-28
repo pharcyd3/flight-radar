@@ -6,6 +6,7 @@
 #include "aircraft.h"
 #include "opensky.h"
 #include "adsblive.h"
+#include "routelookup.h"
 #include "radar.h"
 #include "map.h"
 #include "lofimap.h"
@@ -52,25 +53,48 @@ static const unsigned long FOLLOW_GRACE_MS = 90000UL;
 // tracked aircraft for an uncluttered chase.
 static bool  followHideOthers = false;
 
+// Route (origin/destination) of the followed flight, looked up once per follow
+// session via adsbdb (see routelookup.h). followRouteResolved just means "we've
+// tried" (successfully or not) so we don't hammer the lookup every poll;
+// followHaveRoute is whether we actually got a route to show.
+static bool  followRouteResolved      = false;
+static bool  followHaveRoute          = false;
+static int   followRouteLookupTries   = 0;
+static const int FOLLOW_ROUTE_MAX_TRIES = 5;   // give up if the callsign never appears
+static float followOriginLat = 0, followOriginLon = 0;
+static float followDestLat   = 0, followDestLon   = 0;
+static char  followOriginCode[8] = "", followDestCode[8] = "";
+
 static float viewLat() { return following ? followCenterLat : homeLat(); }
 static float viewLon() { return following ? followCenterLon : homeLon(); }
 
-// Display radius drives the on-screen map scale. Follow mode uses the extended
-// zoom table (out to a whole-earth view); normal mode uses the standard five.
+// Display radius drives the on-screen map scale. While following a flight whose
+// route is known, it auto-fits both the departure and destination airports
+// around the plane's current position — zooming in on its own as the flight
+// nears arrival. Otherwise (not following, or the route is unknown) it's the
+// normal dial-controlled five-step range.
 static float displayRadiusKm() {
-    if (following) return FOLLOW_ZOOM_STEPS[constrain(zoomIdx, 0, FOLLOW_ZOOM_COUNT - 1)];
+    if (following && followHaveRoute) {
+        float dO = RadarDisplay::greatCircleKm(followCenterLat, followCenterLon,
+                                               followOriginLat, followOriginLon);
+        float dD = RadarDisplay::greatCircleKm(followCenterLat, followCenterLon,
+                                               followDestLat, followDestLon);
+        float r = (dO > dD ? dO : dD) * FOLLOW_ROUTE_MARGIN;
+        if (r < FOLLOW_ROUTE_MIN_KM) r = FOLLOW_ROUTE_MIN_KM;
+        if (r > FOLLOW_ROUTE_MAX_KM) r = FOLLOW_ROUTE_MAX_KM;
+        return r;
+    }
     return ZOOM_STEPS[constrain(zoomIdx, 0, ZOOM_COUNT - 1)];
 }
 
-// Fetch radius is decoupled from display zoom and capped, so zooming the map out
-// in follow mode keeps pulling only the tracked aircraft's local traffic rather
-// than ballooning the request (or exceeding airplanes.live's 250 nm limit).
+// Fetch radius is decoupled from display zoom and capped, so the route view
+// (which can be zoomed out far beyond a normal step for a long-haul flight)
+// never balloons the data request — we only need the tracked aircraft's local
+// traffic, not everything between departure and destination.
 static float fetchRadiusKm() {
     float d = displayRadiusKm();
     return d < FETCH_MAX_KM ? d : FETCH_MAX_KM;
 }
-
-static int maxZoomIdx() { return (following ? FOLLOW_ZOOM_COUNT : ZOOM_COUNT) - 1; }
 
 // Banner label for the followed aircraft — its callsign while it's in the current
 // set, otherwise its icao24. Empty when not following.
@@ -85,6 +109,9 @@ static const char* followLabel() {
 // of truth for "paint the current frame" so every path stays consistent.
 static void redraw() {
     radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers);
+    radar.setRoute(following && followHaveRoute,
+                   followOriginLat, followOriginLon, followDestLat, followDestLon,
+                   followOriginCode, followDestCode);
     radar.draw(aircraft, viewLat(), viewLon(), displayRadiusKm(), zoomIdx,
                selectedAc, lastUpdateMs, fetchInProgress);
 }
@@ -94,6 +121,9 @@ static void startFollow(int idx) {
     following = true;
     followHideOthers = false;   // start each chase showing all traffic
     followLastSeenMs = millis();
+    followRouteResolved = false;   // (re-)attempt a route lookup for this session
+    followHaveRoute = false;
+    followRouteLookupTries = 0;
     strncpy(followIcao, aircraft[idx].icao24, sizeof(followIcao) - 1);
     followIcao[sizeof(followIcao) - 1] = '\0';
     followCenterLat = aircraft[idx].lat;
@@ -104,9 +134,27 @@ static void startFollow(int idx) {
 static void stopFollow() {
     following = false;
     followIcao[0] = '\0';
-    // Extended zoom-out levels only exist in follow mode; clamp back into the
-    // normal range so we don't return to the home view zoomed out to the globe.
-    if (zoomIdx > ZOOM_COUNT - 1) zoomIdx = ZOOM_COUNT - 1;
+}
+
+// Attempts (once per follow session, retried across a few polls until the
+// callsign is known) to resolve the followed flight's route via adsbdb. Called
+// from doFetch() after a successful poll — a blocking HTTPS call, but a one-off,
+// same cost class as a map compose. Silently gives up if the callsign never
+// appears or has no route on file (common for GA/military/some regional traffic).
+static void maybeResolveFollowRoute() {
+    if (!following || followRouteResolved) return;
+
+    int idx = radar.findByIcao(aircraft, followIcao);
+    const char* cs = (idx >= 0) ? aircraft[idx].callsign : nullptr;
+    if (!cs || !cs[0]) {
+        if (++followRouteLookupTries >= FOLLOW_ROUTE_MAX_TRIES) followRouteResolved = true;
+        return;
+    }
+
+    followHaveRoute = fetchFlightRoute(cs,
+        followOriginLat, followOriginLon, followOriginCode, sizeof(followOriginCode),
+        followDestLat,   followDestLon,   followDestCode,   sizeof(followDestCode));
+    followRouteResolved = true;   // resolved either way — don't hammer adsbdb every poll
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -156,14 +204,24 @@ static void checkSerialCommands() {
     if (line == "RESUME")    { screenshotPaused = false; return; }
     if (line == "SPLASH")    { radar.drawBoot(); return; }
     if (line == "INFO") {
-        Serial.printf("INFO ac=%d zoom=%d map=%d sel=%d follow=%d hide=%d heap=%u\n",
+        Serial.printf("INFO ac=%d zoom=%d map=%d sel=%d follow=%d hide=%d heap=%u "
+                      "home=%.4f,%.4f view=%.4f,%.4f route=%d\n",
                       (int)aircraft.size(), zoomIdx, mapMode(), selectedAc,
-                      following ? 1 : 0, followHideOthers ? 1 : 0, ESP.getFreeHeap());
+                      following ? 1 : 0, followHideOthers ? 1 : 0, ESP.getFreeHeap(),
+                      homeLat(), homeLon(), viewLat(), viewLon(), followHaveRoute ? 1 : 0);
         return;
     }
     if (line.startsWith("MAP:"))   { setMapMode(line.substring(4).toInt()); redraw(); return; }
+    if (line.startsWith("SETHOME:")) {
+        int sep = line.indexOf(',', 8);
+        if (sep > 0) {
+            setHomeLocation(line.substring(8, sep).toFloat(), line.substring(sep + 1).toFloat());
+            lastFetchMs = 0; redraw();
+        }
+        return;
+    }
     if (line.startsWith("SRC:"))   { setDataSource(line.substring(4).toInt()); lastFetchMs = 0; return; }
-    if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, maxZoomIdx());
+    if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, ZOOM_COUNT - 1);
                                      lastFetchMs = 0; redraw(); return; }
     if (line.startsWith("SEL:"))   { selectedAc = line.substring(4).toInt(); redraw(); return; }
     if (line == "FOLLOW")    { if (selectedAc >= 0) startFollow(selectedAc); redraw(); return; }
@@ -171,6 +229,12 @@ static void checkSerialCommands() {
     if (line == "HIDE")      { followHideOthers = !followHideOthers; redraw(); return; }
     if (line.startsWith("STATUS:")) { radar.setStatusVisible(line.substring(7).toInt() != 0); redraw(); return; }
     if (line == "REFETCH")   { doFetch(); return; }
+    if (line == "LIST") {
+        for (int i = 0; i < (int)aircraft.size(); ++i)
+            Serial.printf("LIST %d %s %.4f,%.4f\n", i, aircraft[i].callsign,
+                          aircraft[i].lat, aircraft[i].lon);
+        return;
+    }
     if (line == "MENU") {
         renderSettingsPreview(radar, aircraft, homeLat(), homeLon(),
                               ZOOM_STEPS[zoomIdx], zoomIdx, lastUpdateMs, fetchInProgress);
@@ -246,6 +310,8 @@ static void doFetch() {
     } else if (selIcao[0]) {
         selectedAc = radar.findByIcao(aircraft, selIcao);
     }
+
+    maybeResolveFollowRoute();   // one-off per follow session; no-op once resolved
 
     // Outcome (incl. failures) is surfaced by the poll icon colour and the
     // tap-to-view status panel, so just redraw the radar either way.
@@ -389,10 +455,16 @@ void loop() {
             return;
         }
 
-        zoomIdx = constrain(zoomIdx + zoomDelta, 0, maxZoomIdx());
+        if (following && followHaveRoute) {
+            // Zoom auto-fits the known route (see displayRadiusKm()) — the dial
+            // doesn't override it; this is the "stick to the zoom level required
+            // to show the whole journey" behaviour.
+            return;
+        }
+
+        zoomIdx = constrain(zoomIdx + zoomDelta, 0, ZOOM_COUNT - 1);
         if (!following) { selectedAc = -1; doFetch(); lastFetchMs = millis(); return; }
-        // Following: zooming the map out only changes the display (the fetch box
-        // is capped), so just redraw — no need to re-poll for a wider area.
+        // Following without a known route: manual zoom, same as the normal view.
         redraw();
         return;
     }

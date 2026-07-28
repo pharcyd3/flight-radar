@@ -215,6 +215,70 @@ void RadarDisplay::setFollow(bool following, float homeLat, float homeLon,
     }
 }
 
+float RadarDisplay::greatCircleKm(float lat1, float lon1, float lat2, float lon2) {
+    const float RAD = (float)M_PI / 180.0f;
+    float p1 = lat1 * RAD, p2 = lat2 * RAD;
+    float dp = (lat2 - lat1) * RAD, dl = (lon2 - lon1) * RAD;
+    float a = sinf(dp / 2.0f) * sinf(dp / 2.0f) +
+              cosf(p1) * cosf(p2) * sinf(dl / 2.0f) * sinf(dl / 2.0f);
+    if (a > 1.0f) a = 1.0f;
+    float c = 2.0f * atan2f(sqrtf(a), sqrtf(1.0f - a));
+    return EARTH_R * c;
+}
+
+// Interpolates a point at fraction t (0=origin, 1=destination) along the great
+// circle between two lat/lon points, via spherical linear interpolation (slerp)
+// of their unit vectors. Used to precompute the route line's sample points once,
+// rather than approximating with a straight lat/lon lerp (which cuts noticeably
+// inside the true path over long distances).
+static void slerpLatLon(float lat1, float lon1, float lat2, float lon2, float t,
+                        float& lat, float& lon) {
+    const float RAD = (float)M_PI / 180.0f, DEG = 180.0f / (float)M_PI;
+    float p1 = lat1 * RAD, l1 = lon1 * RAD, p2 = lat2 * RAD, l2 = lon2 * RAD;
+    float x1 = cosf(p1) * cosf(l1), y1 = cosf(p1) * sinf(l1), z1 = sinf(p1);
+    float x2 = cosf(p2) * cosf(l2), y2 = cosf(p2) * sinf(l2), z2 = sinf(p2);
+
+    float dot = x1 * x2 + y1 * y2 + z1 * z2;
+    if (dot > 1.0f) dot = 1.0f;
+    if (dot < -1.0f) dot = -1.0f;
+    float d = acosf(dot);
+
+    float x, y, z;
+    if (d < 1e-6f) {
+        x = x1; y = y1; z = z1;
+    } else {
+        float sind = sinf(d);
+        float a = sinf((1.0f - t) * d) / sind, b = sinf(t * d) / sind;
+        x = a * x1 + b * x2; y = a * y1 + b * y2; z = a * z1 + b * z2;
+    }
+    lat = asinf(z) * DEG;
+    lon = atan2f(y, x) * DEG;
+}
+
+void RadarDisplay::setRoute(bool active, float originLat, float originLon,
+                            float destLat, float destLon,
+                            const char* originCode, const char* destCode) {
+    if (!active) { _haveRoute = false; return; }
+
+    // Skip recomputing the sampled points if the endpoints haven't changed —
+    // this is called every redraw while following (~2 Hz), but the route itself
+    // only changes once per follow session.
+    bool same = _haveRoute && _routeOLat == originLat && _routeOLon == originLon &&
+               _routeDLat == destLat && _routeDLon == destLon;
+    if (!same) {
+        _routeOLat = originLat; _routeOLon = originLon;
+        _routeDLat = destLat;   _routeDLon = destLon;
+        for (int i = 0; i < ROUTE_POINTS; ++i) {
+            float t = (float)i / (float)(ROUTE_POINTS - 1);
+            slerpLatLon(originLat, originLon, destLat, destLon, t,
+                       _routeLat[i], _routeLon[i]);
+        }
+    }
+    if (originCode) { strncpy(_routeOCode, originCode, sizeof(_routeOCode) - 1); _routeOCode[sizeof(_routeOCode) - 1] = '\0'; }
+    if (destCode)   { strncpy(_routeDCode, destCode,   sizeof(_routeDCode) - 1);   _routeDCode[sizeof(_routeDCode) - 1] = '\0'; }
+    _haveRoute = true;
+}
+
 int RadarDisplay::findByIcao(const std::vector<Aircraft>& aircraft,
                              const char* icao) const {
     if (!icao || !icao[0]) return -1;
@@ -295,8 +359,11 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
 
     // Airports over the map (raster Full or Lo-fi), beneath the aircraft. The
     // lo-fi path already draws its own city labels; airports are added on both.
-    // Skipped when zoomed way out (follow's global levels) — too dense to read.
+    // Skipped when zoomed way out (a long follow-route view) — too dense to read.
     if (mm != MAP_OFF && radiusKm <= 1500.0f) drawAirports(cLat, cLon, radiusKm);
+
+    // Dotted great-circle route line for the followed flight, if known.
+    if (_following && _haveRoute) drawRoute(cLat, cLon, radiusKm);
 
     // Breadcrumb trail for the selected aircraft, drawn under the marks.
     if (showTrails() && selectedIdx >= 0 && selectedIdx < (int)aircraft.size())
@@ -363,6 +430,42 @@ void RadarDisplay::drawTrail(const Aircraft& ac,
     int cx, cy;
     acToScreen(ac, cLat, cLon, radiusKm, cx, cy);
     _g->drawLine(prevx, prevy, cx, cy, COL_SEL);
+}
+
+// Dotted great-circle route line (precomputed by setRoute()) plus origin/
+// destination markers + IATA/ICAO code labels. The plane's own mark, already
+// drawn elsewhere, is what visibly "moves along" this line as it flies.
+void RadarDisplay::drawRoute(float cLat, float cLon, float radiusKm) {
+    // Small dots at each sampled point — naturally reads as a dashed line thanks
+    // to the point spacing, without needing an explicit dash pattern.
+    for (int i = 0; i < ROUTE_POINTS; ++i) {
+        int sx, sy;
+        worldToScreen(_routeLat[i], _routeLon[i], cLat, cLon, radiusKm, sx, sy);
+        int dx = sx - CX, dy = sy - CY;
+        if (dx * dx + dy * dy > PLOT_R * PLOT_R) continue;   // outside the scope
+        _g->fillCircle(sx, sy, 1, COL_RING_LBL);
+    }
+
+    // Endpoint markers — hollow circles (distinct from the airports layer's
+    // filled squares) labelled with the airport code, so it's clear which end
+    // is which even mid-flight.
+    auto markEndpoint = [&](float lat, float lon, const char* code) {
+        int sx, sy;
+        worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
+        int dx = sx - CX, dy = sy - CY;
+        if (dx * dx + dy * dy > PLOT_R * PLOT_R) return;
+        _g->drawCircle(sx, sy, 4, COL_HALO);
+        _g->drawCircle(sx, sy, 3, COL_SEL);
+        if (code && code[0] && placeLabel(sx + 5, sy - 5, (int)strlen(code) * 6)) {
+            _g->setTextDatum(ML_DATUM);
+            _g->setTextSize(1);
+            _g->setTextColor(COL_SEL, COL_BG);
+            _g->drawString(code, sx + 5, sy - 5);
+        }
+    };
+    markEndpoint(_routeOLat, _routeOLon, _routeOCode);
+    markEndpoint(_routeDLat, _routeDLon, _routeDCode);
+    _g->setTextDatum(MC_DATUM);
 }
 
 // Append the current reported positions to each aircraft's trail, keyed by
@@ -647,13 +750,17 @@ void RadarDisplay::drawRings(float radiusKm) {
 // glance without having to parse the "Nkm" ring labels. Each dot gets a dark
 // halo behind it for the same map-contrast reason as the aircraft marks.
 void RadarDisplay::drawZoomDots(int zoomIdx) {
+    // While following a flight with a known route, zoom auto-fits the journey
+    // continuously rather than stepping through the fixed levels these dots
+    // represent — showing them would just be misleading, so skip them.
+    if (_following && _haveRoute) return;
+
     static constexpr int DOT_Y        = 26;   // just below the "N" tick
     static constexpr int DOT_GAP      = 14;
     static constexpr int DOT_R        = 3;
     static constexpr int DOT_R_ACTIVE = 4;
 
-    // Follow mode exposes the extended zoom range, so show one dot per level of it.
-    int count = _following ? FOLLOW_ZOOM_COUNT : ZOOM_COUNT;
+    int count = ZOOM_COUNT;
     int startX = CX - (count - 1) * DOT_GAP / 2;
     for (int i = 0; i < count; i++) {
         int  x      = startX + i * DOT_GAP;
