@@ -22,6 +22,7 @@ struct SettingsState {
     uint8_t map           = MAP_LOFI;  // Full/Lo-fi/Off    — default Lo-fi
     uint8_t refresh       = REFRESH_DEFAULT;
     uint8_t buzzEmergency = 0;  // On/Off                  — 0 = On (matches prior default true)
+    uint8_t source        = SOURCE_OPENSKY;  // OpenSky / airplanes.live
 };
 static SettingsState _s;
 
@@ -34,13 +35,19 @@ float minAltitudeM()          { return MIN_ALT_OPTIONS_M[_s.minalt]; }
 bool  showTrails()            { return _s.trails == 0; }
 bool  showRings()             { return _s.rings == 0; }
 int   mapMode()               { return _s.map <= MAP_OFF ? _s.map : MAP_FULL; }
+int   dataSource()            { return _s.source == SOURCE_ADSBLIVE ? SOURCE_ADSBLIVE : SOURCE_OPENSKY; }
+void  setDataSource(int s)    { if (s == SOURCE_OPENSKY || s == SOURCE_ADSBLIVE) _s.source = (uint8_t)s; }
 void  setMapMode(int m)       { if (m >= 0 && m <= MAP_OFF) _s.map = (uint8_t)m; }
 unsigned long refreshIntervalMs() {
-    // "Auto" (index 0) spreads the applicable OpenSky daily budget across 24 h:
-    // the faster authenticated cadence when a client_id is configured, the
-    // slower anonymous cadence otherwise. Adapts live as credentials change.
-    if (_s.refresh == REFRESH_AUTO || _s.refresh >= REFRESH_OPTION_COUNT)
+    if (_s.refresh == REFRESH_AUTO || _s.refresh >= REFRESH_OPTION_COUNT) {
+        // "Auto" adapts to the data source. airplanes.live has no credit/quota
+        // model (fair use ~1 req/s), so it can poll far faster than OpenSky — a
+        // brisk 8 s keeps the radar lively without hammering a community API.
+        if (dataSource() == SOURCE_ADSBLIVE) return 8000UL;
+        // OpenSky Auto spreads the applicable daily budget across 24 h: faster
+        // when authenticated, slower anonymous. Adapts live as credentials change.
         return openskyClientId()[0] ? REFRESH_AUTHED_MS : REFRESH_ANON_MS;
+    }
     return REFRESH_FIXED_MS[_s.refresh - 1];   // indices 1..3 → 10/20/30 s
 }
 
@@ -65,6 +72,7 @@ void loadSettings() {
     // abandons the old value and gives every device the new Auto default.
     _s.refresh       = prefs.getUChar("s_refresh2", REFRESH_DEFAULT);
     _s.buzzEmergency = prefs.getUChar("s_buzz",    0);
+    _s.source        = prefs.getUChar("s_source",  SOURCE_OPENSKY);
     prefs.end();
 }
 
@@ -81,6 +89,7 @@ static void saveSettings() {
     prefs.putUChar("s_map3",   _s.map);
     prefs.putUChar("s_refresh2",_s.refresh);
     prefs.putUChar("s_buzz",   _s.buzzEmergency);
+    prefs.putUChar("s_source", _s.source);
     prefs.end();
 }
 
@@ -149,6 +158,7 @@ static const char* OPTS_MINALT[]  = { "Off", "1,000ft", "5,000ft", "10,000ft", "
 static const char* OPTS_ONOFF[]   = { "On", "Off" };
 static const char* OPTS_MAP[]     = { "Full", "Lo-fi", "Off" };
 static const char* OPTS_REFRESH[] = { "Auto", "10s", "20s", "30s" };
+static const char* OPTS_SOURCE[]  = { "OpenSky", "airplanes.live" };
 
 enum class ItemKind : uint8_t { Cycle, Action, Danger };
 
@@ -178,6 +188,7 @@ static const MenuItem MENU_ITEMS[] = {
     { "Range rings",         ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.rings },
     { "Map",                 ItemKind::Cycle,  OPTS_MAP,     3, &_s.map },
     { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, REFRESH_OPTION_COUNT, &_s.refresh },
+    { "Data source",         ItemKind::Cycle,  OPTS_SOURCE,  2, &_s.source },
     { "Buzz on Emergency",   ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.buzzEmergency },
     { "Set location",        ItemKind::Action, nullptr,      0, nullptr },
     { "Detect location",     ItemKind::Action, nullptr,      0, nullptr },

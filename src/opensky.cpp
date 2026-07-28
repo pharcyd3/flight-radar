@@ -42,6 +42,13 @@ static void setStatus(ApiState st, int http, int bytes, const char* detail) {
     _status.detail[sizeof(_status.detail) - 1] = '\0';
 }
 
+// Public setter used by alternate data sources (adsblive.cpp) to report through
+// the same status snapshot the UI reads.
+void setApiStatus(ApiState st, ApiAuth auth, int http, int bytes, const char* detail) {
+    setStatus(st, http, bytes, detail);
+    _status.auth = auth;
+}
+
 // ── OAuth2 client-credentials ─────────────────────────────────────────────────
 // OpenSky retired HTTP Basic Auth; the REST API now requires a Bearer token
 // obtained from the client_id/client_secret via the OAuth2 token endpoint.
@@ -177,8 +184,8 @@ static bool skipPastToken(File& f, const char* token) {
     return false;
 }
 
-bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
-                   std::vector<Aircraft>& out) {
+bool fetchAircraftOpenSky(float centerLat, float centerLon, float radiusKm,
+                          std::vector<Aircraft>& out) {
     out.clear();
 
     // Obtain/refresh an OAuth2 token first. A newly acquired token moves us onto

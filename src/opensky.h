@@ -43,7 +43,13 @@ inline bool apiFailed(ApiState s) {
 // Snapshot of the most recent fetch outcome.
 const ApiStatus& apiStatus();
 
+// Sets the shared fetch-status snapshot. Public so alternate data sources
+// (see adsblive.h) can report through the same poll icon / status panel.
+void setApiStatus(ApiState st, ApiAuth auth, int httpCode, int bytes, const char* detail);
+
 // Fetches all aircraft within a bounding box derived from (centerLat, centerLon)
-// expanded by radiusKm.  Returns true on success and populates `out`.
-bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
-                   std::vector<Aircraft>& out);
+// expanded by radiusKm, from the OpenSky Network. Returns true on success and
+// populates `out`. (See adsblive.h for the alternate airplanes.live source; the
+// active source is chosen by the "Data source" setting and dispatched in main.)
+bool fetchAircraftOpenSky(float centerLat, float centerLon, float radiusKm,
+                          std::vector<Aircraft>& out);

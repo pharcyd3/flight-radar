@@ -55,3 +55,9 @@ void setMapMode(int m);
 
 // Auto-refresh interval, driven by the user-selectable "Refresh rate" setting.
 unsigned long refreshIntervalMs();
+
+// Flight-data source: 0 = OpenSky, 1 = airplanes.live. Chosen in Settings and
+// dispatched by main's fetch. See opensky.h / adsblive.h.
+enum DataSource { SOURCE_OPENSKY = 0, SOURCE_ADSBLIVE = 1 };
+int dataSource();
+void setDataSource(int s);   // in-memory (not persisted) — used by the debug hooks

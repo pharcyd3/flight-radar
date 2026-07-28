@@ -5,6 +5,7 @@
 #include "config.h"
 #include "aircraft.h"
 #include "opensky.h"
+#include "adsblive.h"
 #include "radar.h"
 #include "map.h"
 #include "lofimap.h"
@@ -141,6 +142,7 @@ static void checkSerialCommands() {
         return;
     }
     if (line.startsWith("MAP:"))   { setMapMode(line.substring(4).toInt()); redraw(); return; }
+    if (line.startsWith("SRC:"))   { setDataSource(line.substring(4).toInt()); lastFetchMs = 0; return; }
     if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, ZOOM_COUNT - 1);
                                      lastFetchMs = 0; redraw(); return; }
     if (line.startsWith("SEL:"))   { selectedAc = line.substring(4).toInt(); redraw(); return; }
@@ -198,8 +200,10 @@ static void doFetch() {
     redraw();
 
     // Fetch is centred on the view centre — home normally, the tracked aircraft
-    // while following.
-    bool ok = fetchAircraft(viewLat(), viewLon(), r, aircraft);
+    // while following — from whichever data source is selected.
+    bool ok = (dataSource() == SOURCE_ADSBLIVE)
+                  ? fetchAircraftAdsbLive(viewLat(), viewLon(), r, aircraft)
+                  : fetchAircraftOpenSky(viewLat(), viewLon(), r, aircraft);
     // Append this poll's reported positions to the breadcrumb trails (only on a
     // real success — a failed fetch clears `aircraft`, and we don't want an empty
     // frame wiping the history that interpolation and the selected-trail draw on).
