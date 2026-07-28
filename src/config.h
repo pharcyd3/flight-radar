@@ -115,8 +115,20 @@ static const float INTERP_MAX_S        = 120.0f;  // cap extrapolation at 2 min
 // handshake needs. Sizing it to MAX_AIRCRAFT (~9 KB) starved the fetch's HTTPS
 // connection ("SSL - Memory allocation failed") — MAX_TRAILS × TRAIL_LEN is a
 // fraction of that.
-static const int TRAIL_LEN  = 8;
-static const int MAX_TRAILS = 32;
+static const int TRAIL_LEN  = 14;
+static const int MAX_TRAILS = 28;
+
+// Minimum spacing between recorded breadcrumbs, per aircraft.
+//
+// Points used to be recorded once per successful poll, which quietly tied the
+// trail's time span to the refresh rate: at the 5-8 s cadence, TRAIL_LEN points
+// covered barely a minute, which for a 200 km/h aircraft is ~2 km — about ten
+// pixels at the 25 km zoom, i.e. entirely hidden under the aircraft mark's own
+// halo. (It looked fine only while most fetches were failing, since that
+// sampled positions minutes apart by accident.) Spacing the points by time
+// instead makes the trail cover a consistent ~TRAIL_LEN x this window of
+// flight — a bit over 2 minutes — whatever the refresh rate is set to.
+static const unsigned long TRAIL_MIN_INTERVAL_MS = 10000UL;
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 // Min-altitude filter thresholds, metres (Off, 1,000/5,000/10,000/20,000 ft).

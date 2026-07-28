@@ -71,6 +71,7 @@ struct Trail {
     uint8_t  count    = 0;   // valid points held (<= TRAIL_LEN)
     uint8_t  head     = 0;   // next write index (ring buffer)
     uint32_t lastSeen = 0;   // _fetchSeq when last updated — least-recent is evicted
+    uint32_t lastPtMs = 0;   // millis() of the newest point — paces TRAIL_MIN_INTERVAL_MS
 };
 Trail    _trails[MAX_TRAILS];
 uint32_t _fetchSeq = 0;
@@ -429,9 +430,15 @@ static void recordTrailPoint(const Aircraft& ac) {
     }
 
     Trail& t = _trails[slot];
-    // Skip a new point if the aircraft has barely moved (~<50 m), so a
-    // near-stationary target doesn't pile identical breadcrumbs.
+    uint32_t now = millis();
     if (t.count) {
+        // Pace points by time, not by poll, so the trail spans a consistent
+        // stretch of flight instead of shrinking as the refresh rate rises
+        // (see TRAIL_MIN_INTERVAL_MS). Still mark the slot seen, or a plane
+        // present every poll would look stale and get evicted.
+        if (now - t.lastPtMs < TRAIL_MIN_INTERVAL_MS) { t.lastSeen = _fetchSeq; return; }
+        // Skip a new point if the aircraft has barely moved (~<50 m), so a
+        // near-stationary target doesn't pile identical breadcrumbs.
         int last = (t.head + TRAIL_LEN - 1) % TRAIL_LEN;
         float dlat = ac.lat - t.lat[last], dlon = ac.lon - t.lon[last];
         if (dlat * dlat + dlon * dlon < 2.5e-7f) { t.lastSeen = _fetchSeq; return; }
@@ -441,6 +448,7 @@ static void recordTrailPoint(const Aircraft& ac) {
     t.head = (t.head + 1) % TRAIL_LEN;
     if (t.count < TRAIL_LEN) t.count++;
     t.lastSeen = _fetchSeq;
+    t.lastPtMs = now;
 }
 
 void RadarDisplay::recordHistory(const std::vector<Aircraft>& aircraft,
@@ -456,6 +464,30 @@ void RadarDisplay::recordHistory(const std::vector<Aircraft>& aircraft,
             }
     }
     for (const Aircraft& ac : aircraft) recordTrailPoint(ac);
+}
+
+void RadarDisplay::debugDumpTrails(const char* focusIcao, float radiusKm) const {
+    Serial.printf("TRAILS seq=%lu showTrails=%d focus=%s slot=%d\n",
+                  (unsigned long)_fetchSeq, showTrails() ? 1 : 0,
+                  focusIcao && focusIcao[0] ? focusIcao : "-",
+                  (focusIcao && focusIcao[0]) ? trailSlot(focusIcao) : -1);
+    for (int i = 0; i < MAX_TRAILS; ++i) {
+        const Trail& t = _trails[i];
+        if (!t.count) continue;
+        // End-to-end span, in km and in screen pixels at the current zoom —
+        // the number that actually decides whether the trail is visible at all
+        // rather than buried under the aircraft mark's ~7 px halo.
+        int oldest = (t.head + TRAIL_LEN - t.count) % TRAIL_LEN;
+        int newest = (t.head + TRAIL_LEN - 1) % TRAIL_LEN;
+        float dLatKm = (t.lat[newest] - t.lat[oldest]) * KM_PER_DEG;
+        float dLonKm = (t.lon[newest] - t.lon[oldest]) * KM_PER_DEG *
+                       cosf(t.lat[newest] * (float)M_PI / 180.0f);
+        float km = sqrtf(dLatKm * dLatKm + dLonKm * dLonKm);
+        Serial.printf("TRAILS  slot=%d icao=%s count=%u head=%u lastSeen=%lu "
+                      "span=%.2fkm (%.0fpx@%.0fkm)\n",
+                      i, t.icao, t.count, t.head, (unsigned long)t.lastSeen,
+                      km, km / radiusKm * PLOT_R, radiusKm);
+    }
 }
 
 void RadarDisplay::drawBoot() {

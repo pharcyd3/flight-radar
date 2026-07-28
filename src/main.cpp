@@ -270,8 +270,10 @@ static void checkSerialCommands() {
     if (line == "REFETCH")   { startFetch(); return; }
     if (line == "LIST") {
         for (int i = 0; i < (int)aircraft.size(); ++i)
-            Serial.printf("LIST %d %s %.4f,%.4f\n", i, aircraft[i].callsign,
-                          aircraft[i].lat, aircraft[i].lon);
+            Serial.printf("LIST %d %s %.4f,%.4f %.0fkmh %.0fm%s\n", i, aircraft[i].callsign,
+                          aircraft[i].lat, aircraft[i].lon,
+                          aircraft[i].speedMs * 3.6f, aircraft[i].altM,
+                          aircraft[i].onGround ? " GND" : "");
         return;
     }
     if (line == "MENU") {
@@ -280,6 +282,13 @@ static void checkSerialCommands() {
         return;
     }
     if (line == "SETLOC")    { renderSetLocationPreview(radar); return; }
+    if (line == "TRAILS") {
+        const char* focus = following ? followIcao
+                          : (selectedAc >= 0 && selectedAc < (int)aircraft.size()
+                             ? aircraft[selectedAc].icao24 : "");
+        radar.debugDumpTrails(focus, displayRadiusKm());
+        return;
+    }
 }
 
 static void checkEmergency() {

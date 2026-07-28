@@ -56,6 +56,11 @@ public:
     // Index of the aircraft with this icao24, or -1 if it isn't in the set.
     int findByIcao(const std::vector<Aircraft>& aircraft, const char* icao) const;
 
+    // Dumps the breadcrumb-trail store over serial (TRAILS debug command) —
+    // tells a trail that was never *recorded* apart from one that was recorded
+    // but isn't being *drawn*.
+    void debugDumpTrails(const char* focusIcao, float radiusKm) const;
+
     // Public wrapper for the dead-reckoned (interpolated) position of an aircraft
     // this frame — follow mode uses it to track a smoothly-moving target.
     void interpPos(const Aircraft& ac, float& lat, float& lon) const {
