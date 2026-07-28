@@ -46,7 +46,7 @@ then open:
     - **Home location** — the centre point of your radar. You have three options, easiest first:
         - **Leave everything blank** to have the device auto-detect your approximate location from your network once it's online (city-level; a VPN will throw it off).
         - Type a **place name** in the *Place name* field (e.g. `Berlin`, `Paris, France`) — it's geocoded to coordinates after the device reconnects. A place name always wins over the coordinate fields.
-        - Enter **Home latitude** / **Home longitude** directly in decimal degrees (e.g. `51.5007`, `-0.1246`) for a precise fix. You can read these off any map app by long-pressing/right-clicking your location.
+        - Enter **Home latitude** / **Home longitude** directly in decimal degrees (e.g. `51.5007`, `-0.1246`) for a precise fix. See **[Setting Your Location](setting-location.md)** for how to read these off Google Maps, and every other way to set or change your location later.
 5. Save. The device connects to your WiFi, resolves your location, and reboots into the radar view.
 
 If the portal times out (5 minutes) without a successful connection, the device restarts and re-opens the portal automatically.
