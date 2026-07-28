@@ -1,0 +1,16 @@
+/* Make the top-level entries in the left navigation sidebar stand out — bold and
+   a larger font — so the section headings (Setup / Operating / Reference) and the
+   top-level pages read as clear headings, with their sub-pages nested beneath. */
+.md-nav--primary > .md-nav__list > .md-nav__item > .md-nav__link {
+  font-weight: 700;
+  font-size: 0.82rem;   /* default nav links are ~0.7rem */
+  line-height: 1.5;
+}
+
+/* Section group labels (Setup / Operating / Reference) in the same bold/larger
+   style, and use the full-strength foreground colour so they don't look dimmed. */
+.md-nav--primary > .md-nav__list > .md-nav__item--section > .md-nav__link {
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--md-default-fg-color);
+}
