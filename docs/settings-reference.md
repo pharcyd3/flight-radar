@@ -73,8 +73,8 @@ The background style drawn beneath the radar.
 
 | Value | Behaviour |
 |---|---|
-| **Full** *(default)* | A real OpenStreetMap street map, fetched per location/zoom and cached to flash. See [Map & Caching](map-caching.md). |
-| Lo-fi | An **offline vector map** — coastlines, borders, rivers, and lakes as themed lines, plus labels for major cities. The whole world is embedded in the firmware, so it needs no network, switches instantly, and stays smooth while [following](using-the-device.md#following-an-aircraft) an aircraft. |
+| **Lo-fi** *(default)* | An **offline vector map** — coastlines, borders, rivers, and lakes as themed lines, plus labels for major cities and airports. The whole world is embedded in the firmware, so it needs no network, switches instantly, and stays smooth while [following](using-the-device.md#following-an-aircraft) an aircraft. It's the default because, with no tile fetching, it's the most robust option on this no-PSRAM board. |
+| Full | A real OpenStreetMap street map, fetched per location/zoom and cached to flash. See [Map & Caching](map-caching.md). |
 | Off | A plain themed background (classic radar-scope look). |
 
 The lo-fi map is deliberately low-detail — it's meant as a lightweight geographic reference, not a street map.

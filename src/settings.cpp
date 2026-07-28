@@ -19,7 +19,7 @@ struct SettingsState {
     uint8_t minalt        = 0;  // Off/1k/5k/10k/20k ft
     uint8_t trails        = 0;  // On/Off                  — 0 = On
     uint8_t rings         = 0;  // On/Off                  — 0 = On
-    uint8_t map           = 0;  // Full/Lo-fi/Off          — 0 = Full
+    uint8_t map           = MAP_LOFI;  // Full/Lo-fi/Off    — default Lo-fi
     uint8_t refresh       = REFRESH_DEFAULT;
     uint8_t buzzEmergency = 0;  // On/Off                  — 0 = On (matches prior default true)
 };
@@ -54,9 +54,11 @@ void loadSettings() {
     _s.minalt        = prefs.getUChar("s_minalt",  0);
     _s.trails        = prefs.getUChar("s_trails",  0);
     _s.rings         = prefs.getUChar("s_rings",   0);
-    // Key bumped to "s_map2": the option gained a middle "Lo-fi" entry, so old
-    // On/Off (0/1) values would map to Full/Lo-fi. Fresh key → Full default.
-    _s.map           = prefs.getUChar("s_map2",    MAP_FULL);
+    // Key bumped to "s_map3": the default is now Lo-fi (offline, no tile fetching
+    // — far more robust than the raster map on this no-PSRAM board). Bumping the
+    // key flips existing devices to the new default too; users who prefer Full can
+    // still switch back in the menu (which persists under this key).
+    _s.map           = prefs.getUChar("s_map3",    MAP_LOFI);
     // NOTE: key is "s_refresh2" (not "s_refresh"): the refresh option list
     // gained an "Auto" entry at index 0, shifting every fixed option up one, so
     // old saved indices would map to the wrong interval. Bumping the key
@@ -76,7 +78,7 @@ static void saveSettings() {
     prefs.putUChar("s_minalt", _s.minalt);
     prefs.putUChar("s_trails", _s.trails);
     prefs.putUChar("s_rings",  _s.rings);
-    prefs.putUChar("s_map2",   _s.map);
+    prefs.putUChar("s_map3",   _s.map);
     prefs.putUChar("s_refresh2",_s.refresh);
     prefs.putUChar("s_buzz",   _s.buzzEmergency);
     prefs.end();
