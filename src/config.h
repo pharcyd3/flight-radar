@@ -24,29 +24,6 @@ static const float ZOOM_STEPS[]  = { 10.0f, 25.0f, 50.0f, 100.0f, 200.0f };
 static const int   ZOOM_COUNT    = 5;
 static const int   ZOOM_DEFAULT  = 1;   // start at 25 km
 
-// ── Follow-mode route view ───────────────────────────────────────────────────
-// While following an aircraft whose route is known (see routelookup.h), the
-// display zooms out just enough to fit both the departure and destination
-// airports around the plane's current position — no manual zoom needed, and it
-// naturally zooms back in as the flight nears arrival. Clamped so a very long
-// route doesn't zoom out absurdly far, and a very short hop doesn't zoom in
-// tighter than the normal closest step.
-static const float FOLLOW_ROUTE_MIN_KM = 10.0f;
-static const float FOLLOW_ROUTE_MAX_KM = 9000.0f;
-static const float FOLLOW_ROUTE_MARGIN = 1.25f;   // headroom so endpoints aren't at the rim
-
-// Cap on the OpenSky/airplanes.live fetch radius regardless of display zoom, so
-// the route view (which can be zoomed out far beyond a normal step) never
-// balloons the data request — we only need the tracked aircraft's local traffic.
-// airplanes.live allows up to 250 nm (~463 km); OpenSky bounding boxes stay
-// modest too.
-static const float FETCH_MAX_KM = 460.0f;
-
-// Number of points sampled along the great-circle route line (see routelookup.h/
-// radar.cpp drawRoute()) — precomputed once when a route resolves, then just
-// re-projected each frame as the view moves. More points = smoother curve.
-static const int ROUTE_POINTS = 40;
-
 // ── Rotary encoder ────────────────────────────────────────────────────────────
 // M5Dial's rotary reports 4 raw quadrature ticks per physical detent/click.
 // Every encoder-driven UI must convert to detents via encoderDetent() before

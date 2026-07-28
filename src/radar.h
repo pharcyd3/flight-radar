@@ -40,24 +40,18 @@ public:
     void recordHistory(const std::vector<Aircraft>& aircraft, const char* focusIcao);
 
     // ── Follow mode ──────────────────────────────────────────────────────────
-    // Tells the radar it's tracking an aircraft: centre reticle on the tracked
-    // point, home shown as an offset marker, and the UNFOLLOW/SHOW-OTHERS controls.
+    // Tells the radar it's tracking an aircraft: reticle on the tracked point,
+    // home shown as an offset marker, and the UNFOLLOW/SHOW-OTHERS controls.
     // `hideOthers` suppresses every aircraft except the tracked one, for an
-    // uncluttered chase. following=false restores the normal home-centred view.
+    // uncluttered chase. `targetLat/targetLon` is the tracked aircraft's true
+    // position — normally the same point the view is centred on, but the view
+    // can be dragged away from it (see main.cpp's follow-pan), in which case the
+    // reticle is projected to wherever the target actually falls on screen
+    // rather than assumed to be at the centre. following=false restores the
+    // normal home-centred view.
     void setFollow(bool following, float homeLat, float homeLon,
-                   const char* label, bool hideOthers);
-
-    // Sets (or clears, if active=false) the followed flight's route for the
-    // dotted great-circle line drawn while following (see config.h ROUTE_POINTS).
-    // Cheap to call every redraw — the sampled points are only recomputed when
-    // the endpoints actually change. Only drawn while following (see draw()).
-    void setRoute(bool active, float originLat, float originLon,
-                  float destLat, float destLon,
-                  const char* originCode, const char* destCode);
-
-    // Great-circle distance in km — used by follow mode to size the auto-fit
-    // route view (see config.h FOLLOW_ROUTE_*).
-    static float greatCircleKm(float lat1, float lon1, float lat2, float lon2);
+                   const char* label, bool hideOthers,
+                   float targetLat, float targetLon);
 
     // Index of the aircraft with this icao24, or -1 if it isn't in the set.
     int findByIcao(const std::vector<Aircraft>& aircraft, const char* icao) const;
@@ -152,7 +146,6 @@ private:
     void drawZoomDots(int zoomIdx);
     void drawAircraft(const Aircraft& ac, int sx, int sy, bool selected);
     void drawTrail(const Aircraft& ac, float centerLat, float centerLon, float radiusKm);
-    void drawRoute(float centerLat, float centerLon, float radiusKm);
     void drawDetail(const Aircraft& ac);
     void drawFollowButton();
     void drawUnfollowBar();
@@ -177,14 +170,8 @@ private:
     float _homeMarkLat      = 0.0f;
     float _homeMarkLon      = 0.0f;
     char  _followLabel[12]  = "";
-
-    // Route line context (set by setRoute()). _routeLat/_routeLon are sampled
-    // great-circle points from origin to destination, precomputed once when the
-    // endpoints change (not every frame) and re-projected each redraw.
-    bool  _haveRoute   = false;
-    float _routeOLat = 0, _routeOLon = 0, _routeDLat = 0, _routeDLon = 0;
-    char  _routeOCode[8] = "", _routeDCode[8] = "";
-    float _routeLat[ROUTE_POINTS], _routeLon[ROUTE_POINTS];
+    float _followTargetLat  = 0.0f;   // tracked aircraft's true position, for the
+    float _followTargetLon  = 0.0f;   // reticle when the view is panned away from it
 
     bool _showStatus = false;
 

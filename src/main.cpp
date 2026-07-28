@@ -6,7 +6,6 @@
 #include "aircraft.h"
 #include "opensky.h"
 #include "adsblive.h"
-#include "routelookup.h"
 #include "radar.h"
 #include "map.h"
 #include "lofimap.h"
@@ -53,48 +52,47 @@ static const unsigned long FOLLOW_GRACE_MS = 90000UL;
 // tracked aircraft for an uncluttered chase.
 static bool  followHideOthers = false;
 
-// Route (origin/destination) of the followed flight, looked up once per follow
-// session via adsbdb (see routelookup.h). followRouteResolved just means "we've
-// tried" (successfully or not) so we don't hammer the lookup every poll;
-// followHaveRoute is whether we actually got a route to show.
-static bool  followRouteResolved      = false;
-static bool  followHaveRoute          = false;
-static int   followRouteLookupTries   = 0;
-static const int FOLLOW_ROUTE_MAX_TRIES = 10;   // give up if the real callsign never appears
-static float followOriginLat = 0, followOriginLon = 0;
-static float followDestLat   = 0, followDestLon   = 0;
-static char  followOriginCode[8] = "", followDestCode[8] = "";
+// Follow-mode pan: dragging shifts the DISPLAY view away from being centred
+// exactly on the plane (the plane's true tracked position, used for fetching
+// and the reticle, is unaffected) — lets you look around, e.g. to see an
+// airport that's otherwise hidden behind the HIDE OTHERS / UNFOLLOW buttons.
+// Stored as a screen-pixel offset (not lat/lon) so a fixed on-screen drag
+// distance feels the same regardless of the current zoom, and re-projected to
+// a world offset at render time using the current radius. Clamped so the
+// tracked plane can never be dragged fully out of view; a tap elsewhere
+// (without dragging) resets it back to centred.
+static int   followPanPxX = 0, followPanPxY = 0;
+static const float FOLLOW_PAN_MAX_PX = 80.0f;
+// Drag-gesture tracking for the follow touch handler (distinguishes a drag from
+// a tap on the two buttons vs. empty space — see the touch handling below).
+static int  followTouchLastX = 0, followTouchLastY = 0;
+static bool followTouchOnButton = false, followTouchDragged = false;
 
 static float viewLat() { return following ? followCenterLat : homeLat(); }
 static float viewLon() { return following ? followCenterLon : homeLon(); }
 
-// Display radius drives the on-screen map scale. While following a flight whose
-// route is known, it auto-fits both the departure and destination airports
-// around the plane's current position — zooming in on its own as the flight
-// nears arrival. Otherwise (not following, or the route is unknown) it's the
-// normal dial-controlled five-step range.
+// Display radius drives the on-screen map scale — the normal dial-controlled
+// five-step range, whether following or not.
 static float displayRadiusKm() {
-    if (following && followHaveRoute) {
-        float dO = RadarDisplay::greatCircleKm(followCenterLat, followCenterLon,
-                                               followOriginLat, followOriginLon);
-        float dD = RadarDisplay::greatCircleKm(followCenterLat, followCenterLon,
-                                               followDestLat, followDestLon);
-        float r = (dO > dD ? dO : dD) * FOLLOW_ROUTE_MARGIN;
-        if (r < FOLLOW_ROUTE_MIN_KM) r = FOLLOW_ROUTE_MIN_KM;
-        if (r > FOLLOW_ROUTE_MAX_KM) r = FOLLOW_ROUTE_MAX_KM;
-        return r;
-    }
     return ZOOM_STEPS[constrain(zoomIdx, 0, ZOOM_COUNT - 1)];
 }
 
-// Fetch radius is decoupled from display zoom and capped, so the route view
-// (which can be zoomed out far beyond a normal step for a long-haul flight)
-// never balloons the data request — we only need the tracked aircraft's local
-// traffic, not everything between departure and destination.
-static float fetchRadiusKm() {
-    float d = displayRadiusKm();
-    return d < FETCH_MAX_KM ? d : FETCH_MAX_KM;
+// Display centre = the view centre (viewLat/Lon) plus the follow-pan offset, if
+// any. Fetching, hit-testing, and the reticle all keep using viewLat()/viewLon()
+// (the plane's true position) unaffected — only what's drawn shifts.
+static void followPanDeltaLatLon(float& dLat, float& dLon) {
+    dLat = dLon = 0.0f;
+    if (!following || (followPanPxX == 0 && followPanPxY == 0)) return;
+    float kmPerPx = displayRadiusKm() / 105.0f;   // PLOT_R
+    float cl = cosf(followCenterLat * (float)M_PI / 180.0f);
+    if (cl < 0.05f) cl = 0.05f;
+    dLat = (followPanPxY * kmPerPx) / 111.0f;
+    dLon = -(followPanPxX * kmPerPx) / (111.0f * cl);
 }
+static float displayCenterLat() { float dLat, dLon; followPanDeltaLatLon(dLat, dLon); return viewLat() + dLat; }
+static float displayCenterLon() { float dLat, dLon; followPanDeltaLatLon(dLat, dLon); return viewLon() + dLon; }
+
+static void resetFollowPan() { followPanPxX = 0; followPanPxY = 0; }
 
 // Banner label for the followed aircraft — its callsign while it's in the current
 // set, otherwise its icao24. Empty when not following.
@@ -108,11 +106,9 @@ static const char* followLabel() {
 // Redraw the live radar with the current follow context applied. Single source
 // of truth for "paint the current frame" so every path stays consistent.
 static void redraw() {
-    radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers);
-    radar.setRoute(following && followHaveRoute,
-                   followOriginLat, followOriginLon, followDestLat, followDestLon,
-                   followOriginCode, followDestCode);
-    radar.draw(aircraft, viewLat(), viewLon(), displayRadiusKm(), zoomIdx,
+    radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers,
+                    followCenterLat, followCenterLon);
+    radar.draw(aircraft, displayCenterLat(), displayCenterLon(), displayRadiusKm(), zoomIdx,
                selectedAc, lastUpdateMs, fetchInProgress);
 }
 
@@ -120,10 +116,8 @@ static void startFollow(int idx) {
     if (idx < 0 || idx >= (int)aircraft.size()) return;
     following = true;
     followHideOthers = false;   // start each chase showing all traffic
+    resetFollowPan();
     followLastSeenMs = millis();
-    followRouteResolved = false;   // (re-)attempt a route lookup for this session
-    followHaveRoute = false;
-    followRouteLookupTries = 0;
     strncpy(followIcao, aircraft[idx].icao24, sizeof(followIcao) - 1);
     followIcao[sizeof(followIcao) - 1] = '\0';
     followCenterLat = aircraft[idx].lat;
@@ -134,35 +128,7 @@ static void startFollow(int idx) {
 static void stopFollow() {
     following = false;
     followIcao[0] = '\0';
-}
-
-// Attempts (once per follow session, retried across a few polls until the real
-// callsign is known) to resolve the followed flight's route via adsbdb. Called
-// from doFetch() after a successful poll — a blocking HTTPS call, but a one-off,
-// same cost class as a map compose. Silently gives up if the callsign never
-// appears or has no route on file (common for GA/military/some regional traffic).
-static void maybeResolveFollowRoute() {
-    if (!following || followRouteResolved) return;
-
-    int idx = radar.findByIcao(aircraft, followIcao);
-    const Aircraft* ac = (idx >= 0) ? &aircraft[idx] : nullptr;
-    // Both data sources fall back to the bare ICAO24 hex as the callsign when the
-    // real one hasn't been broadcast yet (common right after a flight is first
-    // seen) — so ac->callsign is never actually empty, and checking only for
-    // non-empty fired the lookup immediately with that hex string, got a 404, and
-    // gave up before the real callsign ever showed up a few polls later. Compare
-    // against icao24 to detect the fallback and keep waiting for the real one.
-    bool haveRealCallsign = ac && ac->callsign[0] &&
-                            strncmp(ac->callsign, ac->icao24, sizeof(ac->icao24)) != 0;
-    if (!haveRealCallsign) {
-        if (++followRouteLookupTries >= FOLLOW_ROUTE_MAX_TRIES) followRouteResolved = true;
-        return;
-    }
-
-    followHaveRoute = fetchFlightRoute(ac->callsign,
-        followOriginLat, followOriginLon, followOriginCode, sizeof(followOriginCode),
-        followDestLat,   followDestLon,   followDestCode,   sizeof(followDestCode));
-    followRouteResolved = true;   // resolved either way — don't hammer adsbdb every poll
+    resetFollowPan();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -213,10 +179,10 @@ static void checkSerialCommands() {
     if (line == "SPLASH")    { radar.drawBoot(); return; }
     if (line == "INFO") {
         Serial.printf("INFO ac=%d zoom=%d map=%d sel=%d follow=%d hide=%d heap=%u "
-                      "home=%.4f,%.4f view=%.4f,%.4f route=%d\n",
+                      "home=%.4f,%.4f view=%.4f,%.4f pan=%d,%d\n",
                       (int)aircraft.size(), zoomIdx, mapMode(), selectedAc,
                       following ? 1 : 0, followHideOthers ? 1 : 0, ESP.getFreeHeap(),
-                      homeLat(), homeLon(), viewLat(), viewLon(), followHaveRoute ? 1 : 0);
+                      homeLat(), homeLon(), viewLat(), viewLon(), followPanPxX, followPanPxY);
         return;
     }
     if (line.startsWith("MAP:"))   { setMapMode(line.substring(4).toInt()); redraw(); return; }
@@ -225,6 +191,15 @@ static void checkSerialCommands() {
         if (sep > 0) {
             setHomeLocation(line.substring(8, sep).toFloat(), line.substring(sep + 1).toFloat());
             lastFetchMs = 0; redraw();
+        }
+        return;
+    }
+    if (line.startsWith("PAN:")) {
+        int sep = line.indexOf(',', 4);
+        if (sep > 0) {
+            followPanPxX = line.substring(4, sep).toInt();
+            followPanPxY = line.substring(sep + 1).toInt();
+            redraw();
         }
         return;
     }
@@ -276,7 +251,7 @@ static void checkEmergency() {
 }
 
 static void doFetch() {
-    float r = fetchRadiusKm();   // capped; decoupled from display zoom in follow mode
+    float r = displayRadiusKm();
 
     // Remember the selected aircraft by icao24: fetchAircraft() rebuilds the
     // vector (usually reordered, possibly shorter), so the bare index is stale
@@ -318,8 +293,6 @@ static void doFetch() {
     } else if (selIcao[0]) {
         selectedAc = radar.findByIcao(aircraft, selIcao);
     }
-
-    maybeResolveFollowRoute();   // one-off per follow session; no-op once resolved
 
     // Outcome (incl. failures) is surfaced by the poll icon colour and the
     // tap-to-view status panel, so just redraw the radar either way.
@@ -463,37 +436,60 @@ void loop() {
             return;
         }
 
-        if (following && followHaveRoute) {
-            // Zoom auto-fits the known route (see displayRadiusKm()) — the dial
-            // doesn't override it; this is the "stick to the zoom level required
-            // to show the whole journey" behaviour.
-            return;
-        }
-
         zoomIdx = constrain(zoomIdx + zoomDelta, 0, ZOOM_COUNT - 1);
         if (!following) { selectedAc = -1; doFetch(); lastFetchMs = millis(); return; }
-        // Following without a known route: manual zoom, same as the normal view.
+        // Following: manual zoom, same as the normal view.
         redraw();
         return;
     }
 
-    // ── Touch: select / deselect aircraft ────────────────────────────────────
+    // ── Touch: select / deselect aircraft, or (while following) drag to look
+    // around / tap the two buttons ──────────────────────────────────────────────
     auto touch = M5Dial.Touch.getDetail();
-    if (touch.wasPressed()) {
-        lastInteractionMs = millis();
-        float r = displayRadiusKm();
-        if (following) {
-            // Follow is a mode: the only control is UNFOLLOW. Tapping anywhere
-            // else on the map does nothing, so the chase can't be dropped by an
-            // accidental tap. Unfollowing re-selects the plane so its detail panel
-            // (and FOLLOW button) come back.
-            if (radar.hitUnfollowButton(touch.x, touch.y)) {
+    if (following) {
+        // Follow uses a full press/hold/release lifecycle so a drag can be told
+        // apart from a tap: dragging pans the view (see followPanPxX/Y above);
+        // a plain tap on UNFOLLOW/HIDE OTHERS fires that button; a tap on empty
+        // space recentres the pan. This replaces the old "only wasPressed matters"
+        // handling, which can't distinguish a drag from a tap.
+        if (touch.wasPressed()) {
+            lastInteractionMs = millis();
+            followTouchLastX = touch.x; followTouchLastY = touch.y;
+            followTouchOnButton = radar.hitUnfollowButton(touch.x, touch.y) ||
+                                  radar.hitOthersButton(touch.x, touch.y);
+            followTouchDragged = false;
+        } else if (touch.isPressed()) {
+            int dx = touch.x - followTouchLastX, dy = touch.y - followTouchLastY;
+            if (!followTouchOnButton && (dx != 0 || dy != 0)) {
+                followPanPxX += dx;
+                followPanPxY += dy;
+                float mag = sqrtf((float)followPanPxX * followPanPxX +
+                                  (float)followPanPxY * followPanPxY);
+                if (mag > FOLLOW_PAN_MAX_PX) {
+                    float scale = FOLLOW_PAN_MAX_PX / mag;
+                    followPanPxX = (int)(followPanPxX * scale);
+                    followPanPxY = (int)(followPanPxY * scale);
+                }
+                followTouchDragged = true;
+                lastInteractionMs = millis();
+                redraw();
+            }
+            followTouchLastX = touch.x; followTouchLastY = touch.y;
+        } else if (touch.wasReleased() && !followTouchDragged) {
+            if (radar.hitUnfollowButton(followTouchLastX, followTouchLastY)) {
                 selectedAc = radar.findByIcao(aircraft, followIcao);
                 stopFollow();
-            } else if (radar.hitOthersButton(touch.x, touch.y)) {
+            } else if (radar.hitOthersButton(followTouchLastX, followTouchLastY)) {
                 followHideOthers = !followHideOthers;   // toggle other traffic
+            } else if (!followTouchOnButton) {
+                resetFollowPan();   // plain tap on empty space recentres
             }
-        } else if (radar.hitPollIcon(touch.x, touch.y)) {
+            redraw();
+        }
+    } else if (touch.wasPressed()) {
+        lastInteractionMs = millis();
+        float r = displayRadiusKm();
+        if (radar.hitPollIcon(touch.x, touch.y)) {
             // Tap the poll icon to toggle the API status panel
             radar.setStatusVisible(!radar.statusVisible());
             selectedAc = -1;
