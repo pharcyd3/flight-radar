@@ -4,7 +4,7 @@
 
 #include "config.h"
 #include "aircraft.h"
-#include "opensky.h"
+#include "apistatus.h"
 #include "adsblive.h"
 #include "radar.h"
 #include "map.h"
@@ -37,15 +37,15 @@ static unsigned long lastAlertMs      = 0;
 // When following, the view + fetch box centre on a tracked aircraft (by icao24)
 // instead of home. followCenter* is the current view/map centre; it only jumps
 // to the target's fresh position when the target drifts past ~45% of the plot
-// radius (the "lazy re-centre" that keeps map composes and OpenSky polls bounded).
+// radius (the "lazy re-centre" that keeps map composes and flight-data polls bounded).
 static bool  following       = false;
 static char  followIcao[8]   = "";
 static float followCenterLat = 0.0f;
 static float followCenterLon = 0.0f;
-// OpenSky data has transient gaps — an airborne aircraft can be absent from a
-// run of polls and reappear (sparse ADS-B coverage). Keep following through gaps
-// and only give up after this long with no sighting at all (time-based so it's
-// independent of the refresh rate).
+// ADS-B coverage has transient gaps — an airborne aircraft can be absent from a
+// run of polls and reappear. Keep following through gaps and only give up after
+// this long with no sighting at all (time-based so it's independent of the
+// refresh rate).
 static unsigned long followLastSeenMs = 0;
 static const unsigned long FOLLOW_GRACE_MS = 90000UL;
 // Toggled by the SHOW/HIDE OTHERS button while following — hides all but the
@@ -153,24 +153,13 @@ static void captureScreenshot() {
 }
 
 // Debug/setup convenience over USB serial (local access only — same trust level
-// as flashing). Handles OpenSky credential entry (SETCREDS:) plus a set of
-// screenshot/pose hooks used to drive the device for the manual's screenshots.
+// as flashing) — a set of screenshot/pose hooks used to drive the device for
+// the manual's screenshots and for on-device diagnosis.
 static void checkSerialCommands() {
     if (!Serial.available()) return;
     String line = Serial.readStringUntil('\n');
     line.trim();
     if (line.isEmpty()) return;
-
-    if (line.startsWith("SETCREDS:")) {
-        int sep = line.indexOf(':', 9);
-        if (sep < 0) {
-            Serial.println("[Serial] SETCREDS malformed, expected SETCREDS:<id>:<secret>");
-            return;
-        }
-        setOpenSkyCredentials(line.substring(9, sep).c_str(),
-                              line.substring(sep + 1).c_str());
-        return;
-    }
 
     // ── Screenshot / pose hooks ──────────────────────────────────────────────
     if (line == "SHOT")      { captureScreenshot(); return; }
@@ -203,7 +192,6 @@ static void checkSerialCommands() {
         }
         return;
     }
-    if (line.startsWith("SRC:"))   { setDataSource(line.substring(4).toInt()); lastFetchMs = 0; return; }
     if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, ZOOM_COUNT - 1);
                                      lastFetchMs = 0; redraw(); return; }
     if (line.startsWith("SEL:"))   { selectedAc = line.substring(4).toInt(); redraw(); return; }
@@ -267,10 +255,8 @@ static void doFetch() {
     redraw();
 
     // Fetch is centred on the view centre — home normally, the tracked aircraft
-    // while following — from whichever data source is selected.
-    bool ok = (dataSource() == SOURCE_ADSBLIVE)
-                  ? fetchAircraftAdsbLive(viewLat(), viewLon(), r, aircraft)
-                  : fetchAircraftOpenSky(viewLat(), viewLon(), r, aircraft);
+    // while following.
+    bool ok = fetchAircraftAdsbLive(viewLat(), viewLon(), r, aircraft);
     // Append this poll's reported positions to the breadcrumb trails (only on a
     // real success — a failed fetch clears `aircraft`, and we don't want an empty
     // frame wiping the history that interpolation and the selected-trail draw on).
@@ -279,7 +265,7 @@ static void doFetch() {
     fetchInProgress = false;
 
     // Re-locate the selection by icao24 in the fresh set (follow target takes
-    // precedence). While following, keep going through OpenSky coverage gaps and
+    // precedence). While following, keep going through ADS-B coverage gaps and
     // only give up after FOLLOW_GRACE_MS with no sighting at all.
     if (following) {
         int idx = radar.findByIcao(aircraft, followIcao);
@@ -335,7 +321,7 @@ static void maybePrecacheMaps() {
     }
     if (best < 0) {
         // Whole round done → every level is cached, so the PNG decoder is now
-        // dead weight (composes are cache hits). Free its ~45 KB so OpenSky
+        // dead weight (composes are cache hits). Free its ~45 KB so the flight-data
         // polls have the headroom to handle a big 200 km response. A later
         // compose (new location) re-primes it on demand. Idempotent.
         mapLayer.releaseDecoder();
@@ -568,7 +554,7 @@ void loop() {
         maybePrecacheMaps();
     } else if (mapMode() != MAP_FULL) {
         // Lo-fi / Off: the PNG tile decoder is dead weight, and leaving its
-        // ~45 KB resident starved the TLS handshake (OpenSky's "SSL - Memory
+        // ~45 KB resident starved the TLS handshake (the fetch's "SSL - Memory
         // allocation failed") because free heap sat too low/fragmented. Release
         // it so polls have headroom; a later switch to Full re-primes it on
         // demand from an idle compose. Idempotent — a no-op once released.

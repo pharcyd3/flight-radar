@@ -6,8 +6,8 @@
 #define SETUP_AP_SSID  "Franks-Flight-Radar-Setup"
 #define PRODUCT_UA     "FranksFlightRadar/1.0 (ESP32 hobby project)"
 
-// WiFi and OpenSky credentials are configured on first boot via the captive
-// portal (connect to the "Franks-Flight-Radar-Setup" AP, open 192.168.4.1 in a
+// WiFi and home location are configured on first boot via the captive portal
+// (connect to the "Franks-Flight-Radar-Setup" AP, open 192.168.4.1 in a
 // browser). Hold the encoder button for 3 seconds to reset and re-run setup.
 
 // ── Home location (radar centre) ─────────────────────────────────────────────
@@ -59,27 +59,13 @@ static const unsigned long ENC_STABLE_MS_ZOOM     = 1000UL;
 static const unsigned long ENC_STABLE_MS_MENU     = 350UL;
 
 // ── Polling ───────────────────────────────────────────────────────────────────
-// OpenSky daily budget: 4000 requests/day for a standard authenticated (OAuth2)
-// client, 400/day anonymous (no client credentials). The default "Auto" refresh
-// rate spreads whichever budget applies evenly across a full 24 h, so the feed
-// stays live all day without ever hitting the quota:
-//   authenticated: 86400 s / 4000 = 21.6 s  → poll every 22 s  (~3927 req/day)
-//   anonymous:     86400 s /  400 = 216  s  → poll every 240 s (~360 req/day)
-// The poll timer is measured from each fetch's *start* and a fetch itself blocks
-// ~1-2 s, so the realised rate is always at or under these figures. The
-// anonymous interval carries extra margin because exhausting the anonymous quota
-// earns a punishing (~24 h) lockout. Auto adapts live: adding credentials via
-// the setup portal switches it from the 240 s to the 22 s cadence immediately.
-//
-// The fixed 10/20/30 s options remain for manual override, but 10 s (8640/day)
-// and 20 s (4320/day) both exceed the authenticated budget and will throttle
-// before the day is out; only 30 s (2880/day) is safe all day on a fixed rate.
-static const int           REFRESH_AUTO         = 0;         // index 0 — adapts to credentials
-static const unsigned long REFRESH_AUTHED_MS    = 22000UL;   // 4000/day  → 21.6 s
-static const unsigned long REFRESH_ANON_MS      = 240000UL;  // 400/day   → 216 s (+ margin)
-static const unsigned long REFRESH_FIXED_MS[]   = { 10000UL, 20000UL, 30000UL };  // indices 1..3
-static const int           REFRESH_OPTION_COUNT = 4;         // Auto + 3 fixed
-static const int           REFRESH_DEFAULT       = REFRESH_AUTO;
+// airplanes.live is keyless with no credit/quota model (fair use ~1 req/s), so
+// there's no tiering to adapt to — just a flat list of intervals. Default is a
+// brisk 8 s, well inside fair use, for a lively-feeling radar; the slower options
+// are there for anyone who'd rather poll less.
+static const unsigned long REFRESH_OPTIONS_MS[] = { 5000UL, 8000UL, 15000UL, 30000UL };
+static const int           REFRESH_OPTION_COUNT = 4;
+static const int           REFRESH_DEFAULT      = 1;   // 8 s
 
 // ── Aircraft cap ──────────────────────────────────────────────────────────────
 // Upper bound on aircraft held/drawn per fetch. Bounds heap use for a busy area
@@ -108,7 +94,7 @@ static const float INTERP_MAX_S        = 120.0f;  // cap extrapolation at 2 min
 // (LRU eviction) rather than all of them — the selected one is seen every poll,
 // so it never gets evicted. Kept deliberately small: this is static RAM, and on
 // this no-PSRAM board every KB counts against the single contiguous block the TLS
-// handshake needs. Sizing it to MAX_AIRCRAFT (~9 KB) starved OpenSky's HTTPS
+// handshake needs. Sizing it to MAX_AIRCRAFT (~9 KB) starved the fetch's HTTPS
 // connection ("SSL - Memory allocation failed") — MAX_TRAILS × TRAIL_LEN is a
 // fraction of that.
 static const int TRAIL_LEN  = 8;

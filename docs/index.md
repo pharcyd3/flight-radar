@@ -9,7 +9,7 @@
 
 *The OpenStreetMap street map, and the offline lo-fi vector map (coastlines, cities, and airports).*
 
-It polls [OpenSky Network](https://opensky-network.org/)'s public flight-tracking API for real ADS-B traffic around a home location you choose, and plots it on a radar-style display with a real [OpenStreetMap](https://www.openstreetmap.org/) tile underlay.
+It polls [airplanes.live](https://airplanes.live/)'s free, keyless community ADS-B API for real flight traffic around a home location you choose, and plots it on a radar-style display with a real [OpenStreetMap](https://www.openstreetmap.org/) tile underlay (or an offline vector map — no network needed).
 
 ## What it does
 
@@ -36,12 +36,11 @@ See the **[full feature list](features.md)** for everything, grouped by area.
 ## Where to start
 
 - New device, never flashed? Start with **[Getting Started](getting-started.md)**.
-- Device flashed and connected to WiFi, but no aircraft showing? You need an OpenSky API client — see **[OpenSky API Setup](opensky-setup.md)**.
 - Already running and want to know what a button/setting does? See **[Using the Device](using-the-device.md)** and **[Settings Reference](settings-reference.md)**.
 - Something's not working? Check **[Troubleshooting](troubleshooting.md)** first.
 
 ## A note on data sources
 
-Frank's Flight Radar's positional data comes entirely from [OpenSky Network](https://opensky-network.org/), a non-profit, community-driven ADS-B receiver network. Unlike commercial aggregators, OpenSky's coverage depends on volunteer ground receivers — so in areas with sparse coverage, you may occasionally see no traffic even when aircraft are genuinely nearby. See [Troubleshooting](troubleshooting.md#no-aircraft-showing) for what to expect.
+Frank's Flight Radar's positional data comes entirely from [airplanes.live](https://airplanes.live/), a free, volunteer-run community ADS-B network — no account or API key needed. Like any community network, its coverage depends on volunteer ground receivers, so in areas with sparse coverage you may occasionally see no traffic even when aircraft are genuinely nearby. See [Troubleshooting](troubleshooting.md#no-aircraft-showing) for what to expect.
 
 Map tiles are © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.

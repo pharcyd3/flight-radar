@@ -1,6 +1,9 @@
-#include <LittleFS.h>   // before M5Dial.h — mirrors opensky.cpp's include-order note
+// LittleFS.h must be included before M5Dial.h (which pulls in M5GFX): M5GFX
+// only compiles in its LittleFS-aware drawPngFile() overload if LittleFS's
+// include guard is already defined by the time it's processed (see map.cpp).
+#include <LittleFS.h>
 #include "adsblive.h"
-#include "opensky.h"    // shared ApiStatus + setApiStatus()
+#include "apistatus.h"  // shared ApiStatus + setApiStatus()
 #include "config.h"
 
 #include <M5Dial.h>
@@ -12,8 +15,9 @@
 
 static const float KM_PER_NM = 1.852f;
 
-// ── Body-to-flash streaming (same rationale as opensky.cpp: keep the big
-// response out of the fragmented, no-PSRAM heap) — local copies of the helpers.
+// ── Body-to-flash streaming: keep the (potentially large) response out of the
+// fragmented, no-PSRAM heap by streaming it straight to flash instead of
+// buffering it in RAM. ──
 
 static size_t streamBodyToFile(HTTPClient& http, bool chunked, int contentLen, File& f) {
     Stream* stream = http.getStreamPtr();
@@ -82,8 +86,9 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     int  code = -1, size = -1;
     bool chunked = false;
 
-    // ── HTTP + body-to-flash in its own scope, so the TLS context is freed
-    // before we parse (same heap constraint as the OpenSky path). ──
+    // ── HTTP + body-to-flash in its own scope, so the ~40 KB TLS context is
+    // freed (via RAII at scope exit) before we parse — this fragmented,
+    // no-PSRAM heap can't hold the TLS context and the JSON parser at once. ──
     {
         const char* hdrKeys[] = { "Transfer-Encoding" };
         HTTPClient       http;
@@ -110,8 +115,7 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
             char msg[48];
             if (code < 0) snprintf(msg, sizeof(msg), "Net error %d", code);
             else          snprintf(msg, sizeof(msg), "HTTP %d", code);
-            setApiStatus(code < 0 ? ApiState::NetError : ApiState::HttpError,
-                         ApiAuth::Anonymous, code, size, msg);
+            setApiStatus(code < 0 ? ApiState::NetError : ApiState::HttpError, code, size, msg);
             Serial.printf("[AdsbLive] %s\n", msg);
             http.end();
             return false;
@@ -121,7 +125,7 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
         File wf = LittleFS.open(JSON_TMP, "w");
         if (!wf) {
             http.end();
-            setApiStatus(ApiState::ParseError, ApiAuth::Anonymous, code, size, "FS open failed");
+            setApiStatus(ApiState::ParseError, code, size, "FS open failed");
             return false;
         }
         size = (int)streamBodyToFile(http, chunked, size, wf);
@@ -133,7 +137,7 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
 
     File rf = LittleFS.open(JSON_TMP, "r");
     if (!rf) {
-        setApiStatus(ApiState::ParseError, ApiAuth::Anonymous, code, size, "FS read failed");
+        setApiStatus(ApiState::ParseError, code, size, "FS read failed");
         return false;
     }
 
@@ -145,7 +149,7 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     if (c != '[') {
         rf.close();
         LittleFS.remove(JSON_TMP);
-        setApiStatus(ApiState::NoData, ApiAuth::Anonymous, code, size, "No aircraft");
+        setApiStatus(ApiState::NoData, code, size, "No aircraft");
         return false;
     }
 
@@ -186,8 +190,8 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
             strncpy(ac.callsign, ac.icao24, sizeof(ac.callsign) - 1);
         }
 
-        // Aircraft type (e.g. "A320") shown where OpenSky put country — more use
-        // for planespotting, and airplanes.live doesn't carry a country field.
+        // Aircraft type (e.g. "A320") — airplanes.live doesn't carry a country
+        // field, and the type is more useful for planespotting anyway.
         const char* type = elem["t"] | "";
         strncpy(ac.country, type, sizeof(ac.country) - 1);
 
@@ -218,13 +222,13 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     if (err && out.empty()) {
         char msg[48];
         snprintf(msg, sizeof(msg), "JSON: %s", err.c_str());
-        setApiStatus(ApiState::ParseError, ApiAuth::Anonymous, code, size, msg);
+        setApiStatus(ApiState::ParseError, code, size, msg);
         return false;
     }
 
     char msg[48];
     snprintf(msg, sizeof(msg), "%d aircraft", (int)out.size());
-    setApiStatus(ApiState::Ok, ApiAuth::Anonymous, code, size, msg);
+    setApiStatus(ApiState::Ok, code, size, msg);
     Serial.printf("[AdsbLive] Parsed %d aircraft%s\n", (int)out.size(), err ? " (partial)" : "");
     return true;
 }

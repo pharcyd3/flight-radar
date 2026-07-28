@@ -54,7 +54,6 @@ nav:
   - Setup:
     - Getting Started: getting-started.md
     - Setting Your Location: setting-location.md
-    - OpenSky API Setup: opensky-setup.md
   - Operating:
     - Using the Device: using-the-device.md
     - Settings Reference: settings-reference.md

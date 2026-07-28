@@ -1,6 +1,6 @@
 # Frank's Flight Radar
 
-A live aircraft radar for the [M5Stack M5Dial](https://docs.m5stack.com/en/core/M5Dial), built on real [OpenSky Network](https://opensky-network.org/) ADS-B data with an [OpenStreetMap](https://www.openstreetmap.org/) tile underlay.
+A live aircraft radar for the [M5Stack M5Dial](https://docs.m5stack.com/en/core/M5Dial), built on real [airplanes.live](https://airplanes.live/) ADS-B data with an [OpenStreetMap](https://www.openstreetmap.org/) tile underlay (plus an offline vector map option).
 
 **[Read the full user guide →](https://pharcyd3.github.io/flight-radar/)**
 
@@ -12,7 +12,7 @@ cd flight-radar
 pio run -t upload
 ```
 
-Then follow the on-device WiFi setup portal — see [Getting Started](https://pharcyd3.github.io/flight-radar/getting-started/) for the full walkthrough, and [OpenSky API Setup](https://pharcyd3.github.io/flight-radar/opensky-setup/) for setting up reliable, authenticated flight data access.
+Then follow the on-device WiFi setup portal — see [Getting Started](https://pharcyd3.github.io/flight-radar/getting-started/) for the full walkthrough. No account or API key needed — flight data works out of the box.
 
 ## Project layout
 

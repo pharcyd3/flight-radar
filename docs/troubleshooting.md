@@ -6,19 +6,14 @@ Start by **tapping the poll icon** at the bottom of the radar screen — the API
 
 There are three distinct causes, and the status panel tells you which one you're looking at:
 
-**Status shows "OFFLINE" or "HTTP ERROR"** — a real connectivity or auth problem. Check:
+**Status shows "OFFLINE" or "HTTP ERROR"** — a real connectivity problem. Check:
 
 - WiFi is connected (device reboots and re-shows the setup portal if it can't connect at boot)
-- If authenticated, your OpenSky credentials are correct — check the serial log for `[OpenSky] Got OAuth2 token` shortly after boot; `Token request failed` or `Auth failed (401)` means the client_id/secret are wrong or the client was deleted from your OpenSky account
-- You haven't exceeded your daily credit quota — see [OpenSky API Setup](opensky-setup.md)
+- The status panel's HTTP code — a `429` means you've momentarily outrun [airplanes.live](https://airplanes.live/)'s fair-use rate limit; it's keyless with no account or daily quota, so this clears on its own within a poll or two. If it happens often, switch to a slower **Refresh rate** (Settings menu).
 
-**Status shows "NO DATA"** — the request succeeded (HTTP 200) but OpenSky returned no aircraft for your exact bounding box. This is **not necessarily a bug**. OpenSky is a volunteer ADS-B receiver network, not a commercial aggregator — its coverage can be genuinely sparse in some areas, especially at small zoom radii. This is normal and expected occasionally; if it's the *only* thing you ever see even at maximum zoom (200&nbsp;km) over several minutes, it's worth double-checking there's actually traffic nearby via an independent source (e.g. [adsb.lol](https://adsb.lol/)) before assuming something's wrong on the device.
+**Status shows "NO DATA"** — the request succeeded (HTTP 200) but airplanes.live returned no aircraft for your exact search radius. This is **not necessarily a bug**. airplanes.live is a free community-run ADS-B aggregator, not a commercial one — its coverage can be genuinely sparse in some areas, especially at small zoom radii. This is normal and expected occasionally; if it's the *only* thing you ever see even at maximum zoom (200&nbsp;km) over several minutes, it's worth double-checking there's actually traffic nearby via an independent source (e.g. [adsb.lol](https://adsb.lol/)) before assuming something's wrong on the device.
 
 **Status shows "ONLINE" but the radar still looks empty** — check your **Traffic** and **Min altitude** filters (Settings menu) aren't hiding everything currently in range, and confirm you're not zoomed in tighter than where the traffic actually is.
-
-## Rate limited / 429 errors
-
-The status panel will show something like `Rate limited (60s)` or `Rate limited, retry Ns`. This means you've exhausted your daily OpenSky credit quota. It clears on its own once the quota resets — see [OpenSky API Setup](opensky-setup.md) for the numbers, and consider switching to the 30-second refresh rate if you're hitting this regularly.
 
 ## Map not showing, or looks broken/blank
 
@@ -40,4 +35,4 @@ The M5Dial's rotary encoder on this hardware exhibits occasional electrical nois
 
 ## Getting more detail
 
-Everything above can be cross-checked against the serial console. Connect over USB and open a serial monitor at **115200 baud**. The firmware logs each OpenSky request/response, map tile fetches, WiFi/provisioning events, and any crash backtraces there.
+Everything above can be cross-checked against the serial console. Connect over USB and open a serial monitor at **115200 baud**. The firmware logs each airplanes.live request/response, map tile fetches, WiFi/provisioning events, and any crash backtraces there.

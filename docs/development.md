@@ -14,13 +14,15 @@ flight-radar/
 │   ├── main.cpp         # Arduino setup()/loop(), input handling, fetch scheduling, follow mode
 │   ├── config.h         # tunable constants: zoom steps, encoder timing, refresh, interpolation, branding
 │   ├── aircraft.h       # Aircraft struct + emergency-squawk check
-│   ├── opensky.h/.cpp   # OAuth2 + REST client for OpenSky's /states/all endpoint
+│   ├── apistatus.h/.cpp # shared fetch-outcome status (poll icon / status panel)
+│   ├── adsblive.h/.cpp  # airplanes.live REST client — the flight-data source
 │   ├── map.h/.cpp        # OSM tile fetch, compositing, and LittleFS caching
 │   ├── lofimap.h/.cpp    # reader for the embedded lo-fi vector map blob
 │   ├── geolocate.h/.cpp  # IP auto-detect + place-name geocoding
 │   ├── radar.h/.cpp      # all on-screen rendering (rings, aircraft, trails, lo-fi map, overlays, themes)
 │   ├── settings.h/.cpp   # settings menu UI + persisted settings state
 │   ├── provisioning.h/.cpp  # WiFiManager captive portal, NVS persistence, factory reset
+│   ├── watchdog.h/.cpp   # auto-reset if the main loop ever stalls (wedged blocking call)
 │   └── encoder_debounce.h  # rotary encoder debouncing (see its own extensive comments)
 ├── assets/lofimap.bin   # embedded lo-fi vector map data (generated; linked into flash)
 ├── tools/
@@ -57,17 +59,11 @@ Note that after a fresh flash, the ESP32-S3's native USB CDC interface takes a m
 
 ## The desktop emulator
 
-`emulator/emulator.py` is a Python/pygame recreation of the on-device UI, useful for quickly iterating on layout and interaction logic without needing to reflash real hardware. See the comment header in that file for its controls (scroll to zoom, click to select, right-click for settings). It reads OpenSky credentials from a local `.env` file (see `emulator/.env.example`) rather than the on-device captive portal.
+`emulator/emulator.py` is a Python/pygame recreation of the on-device UI, useful for quickly iterating on layout and interaction logic without needing to reflash real hardware. See the comment header in that file for its controls (scroll to zoom, click to select, right-click for settings). Like the device, it fetches from airplanes.live — no credentials or setup needed.
 
 ## Debug serial commands
 
-The firmware accepts one debug command over the same USB serial connection used for logging:
-
-```
-SETCREDS:<client_id>:<client_secret>
-```
-
-Sets and persists OpenSky OAuth2 credentials without going through the WiFi captive portal — handy when iterating during development. See `checkSerialCommands()` in `main.cpp`.
+The firmware accepts a set of debug commands over the same USB serial connection used for logging — screenshot/pose hooks used to drive the device for the manual's screenshots and for on-device diagnosis (e.g. `INFO` for a state dump, `SHOT` to capture the current frame, `SETHOME:<lat>,<lon>` to set the home location directly). See `checkSerialCommands()` in `main.cpp` for the full list.
 
 ## Regenerating the lo-fi map data
 
@@ -84,7 +80,6 @@ Tuning knobs live at the top of `tools/build_lofimap.py` (`TOL`, the per-layer D
 
 - **No PSRAM.** The ESP32-S3FN8 on the M5Dial has ~320&nbsp;KB of usable RAM total. The map sprite (115&nbsp;KB, RGB565, always resident) and the PNG decoder's ~44&nbsp;KB working buffer are the two largest consumers; TLS handshakes for HTTPS requests also need a non-trivial contiguous allocation. If you're debugging a crash or an intermittent `SSL - Memory allocation failed`, start by checking `ESP.getFreeHeap()` at the point of failure.
 - **The rotary encoder is noisy.** See the extensive comments in `encoder_debounce.h` — this hardware has been observed to produce spurious tick reversals well after a genuine click, which a naive "did the value change" check cannot distinguish from a real second click. Any new encoder-driven UI should reuse `EncoderDebouncer` rather than reading `M5Dial.Encoder.read()` directly.
-- **OpenSky's REST API requires OAuth2**, not the Basic Auth some older examples online still reference. See `opensky.cpp`'s token-handling code and [OpenSky API Setup](opensky-setup.md).
 
 ## Contributing
 

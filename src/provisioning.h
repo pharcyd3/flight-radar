@@ -5,9 +5,9 @@
 // saved credentials.  Call once from setup() after M5Dial.begin().
 void runProvisioning();
 
-// Opens the captive portal to edit home lat/lon, saved favourites, and the
-// OpenSky client_id/secret, without wiping stored WiFi credentials. Blocks
-// until the user saves or the portal times out. Call from the settings menu.
+// Opens the captive portal to edit home lat/lon and saved favourites, without
+// wiping stored WiFi credentials. Blocks until the user saves or the portal
+// times out. Call from the settings menu.
 void runLocationPortal();
 
 // Settings-menu action: approximate and set home from the device's public IP
@@ -20,20 +20,10 @@ bool runDetectLocation();
 void checkResetCombo();
 bool settingsRequested();
 
-// Wipes WiFi credentials, OpenSky login, home location, and saved favourites,
-// then reboots into first-boot provisioning. Does not return. Used by both
-// the encoder-button hold combo and the "Factory Reset" settings menu item.
+// Wipes WiFi credentials, home location, and saved favourites, then reboots
+// into first-boot provisioning. Does not return. Used by both the
+// encoder-button hold combo and the "Factory Reset" settings menu item.
 void factoryReset();
-
-// OpenSky OAuth2 API-client credentials loaded from NVS (may be empty strings
-// if not set — the fetch layer then falls back to anonymous access). Created at
-// opensky-network.org → Account → API Client.
-const char* openskyClientId();
-const char* openskyClientSecret();
-
-// Sets and persists the OpenSky OAuth2 credentials without requiring the WiFi
-// captive portal — used by the serial "SETCREDS:" debug command in main.cpp.
-void setOpenSkyCredentials(const char* clientId, const char* clientSecret);
 
 // Home location (radar centre), entered on the captive portal setup page and
 // persisted to NVS. Falls back to DEFAULT_HOME_LAT/LON until first set.
@@ -49,7 +39,7 @@ void setHomeLocation(float lat, float lon);
 void saveFavourite(int slot, const char* name, float lat, float lon);
 
 // Up to 3 saved favourite locations (name + lat/lon), edited via the
-// "Change Location" portal and selectable from the on-device Settings menu.
+// "Location & Favourites" portal and selectable from the on-device Settings menu.
 // An empty name means the slot hasn't been set yet.
 static const int FAV_COUNT = 3;
 const char* favName(int i);

@@ -1,7 +1,7 @@
 #pragma once
 #include <M5Dial.h>
 #include "aircraft.h"
-#include "opensky.h"
+#include "apistatus.h"
 #include "config.h"
 #include <vector>
 

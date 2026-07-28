@@ -72,8 +72,8 @@ public:
     void pruneExcept(float lat, float lon);
 
     // Releases the ~45 KB PNG-decoder scratch buffer. Call once all zoom levels
-    // are cached (composes become decoder-free cache hits), so OpenSky polls
-    // regain that 45 KB — the difference between a big 200 km JSON response
+    // are cached (composes become decoder-free cache hits), so the flight-data
+    // poll regains that 45 KB — the difference between a big 200 km JSON response
     // fitting or the next TLS handshake being starved of contiguous heap. A
     // later compose (uncached level / new location) re-primes it on demand via
     // ensureDecoder(). No-op if already released.

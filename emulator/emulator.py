@@ -9,8 +9,7 @@ Controls:
   left click in menu= cycle that setting's value
   Q / Escape        = quit (or close menu if open)
 
-Credentials (optional — anonymous works but is rate-limited):
-  set OPENSKY_USER and OPENSKY_PASS environment variables before running.
+Flight data is fetched from airplanes.live (keyless, no setup required).
 """
 
 import io
@@ -71,27 +70,6 @@ def save_location_state(state):
             json.dump(state, f, indent=2)
     except Exception as exc:
         print(f"[Location] failed to save {STATE_FILE}: {exc}")
-
-# ── OpenSky credentials ───────────────────────────────────────────────────────
-# Loaded from environment variables if set, otherwise from a local .env file
-# (KEY=VALUE per line, gitignored) so you don't need to set them every launch
-# or paste them into a coding-assistant chat. See .env.example for the format.
-def _load_env_file(path):
-    if not os.path.exists(path):
-        return
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip())
-
-
-_load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
-
-OPENSKY_USER = os.getenv("OPENSKY_USER", "")
-OPENSKY_PASS = os.getenv("OPENSKY_PASS", "")
 
 # ── Display geometry ──────────────────────────────────────────────────────────
 D      = 240
@@ -223,46 +201,47 @@ class Aircraft:
 
 
 RATE_LIMITED = None  # sentinel for 429 responses
+KM_PER_NM = 1.852
 
+# airplanes.live's community ADS-B REST API — keyless, radius-based, no
+# credit/quota model (fair use ~1 req/s), matching the on-device fetch
+# (see src/adsblive.cpp).
 def fetch_aircraft(center_lat, center_lon, radius_km):
-    KM_PER_DEG = 111.0
-    d_lat = radius_km / KM_PER_DEG
-    d_lon = radius_km / (KM_PER_DEG * math.cos(math.radians(center_lat)))
-    url = (
-        "https://opensky-network.org/api/states/all"
-        f"?lamin={center_lat - d_lat:.4f}&lomin={center_lon - d_lon:.4f}"
-        f"&lamax={center_lat + d_lat:.4f}&lomax={center_lon + d_lon:.4f}"
-    )
-    auth = (OPENSKY_USER, OPENSKY_PASS) if OPENSKY_USER else None
+    radius_nm = max(1, min(250, round(radius_km / KM_PER_NM)))
+    url = f"https://api.airplanes.live/v2/point/{center_lat:.4f}/{center_lon:.4f}/{radius_nm}"
+    headers = {"User-Agent": "FranksFlightRadar-prototype/0.1 (personal project, contact: n/a)"}
     try:
-        resp = requests.get(url, auth=auth, timeout=12)
+        resp = requests.get(url, headers=headers, timeout=12)
         if resp.status_code == 429:
             retry = int(resp.headers.get("Retry-After", 30))
-            print(f"[OpenSky] 429 — backing off {retry}s")
+            print(f"[AdsbLive] 429 — backing off {retry}s")
             return RATE_LIMITED
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        print(f"[OpenSky] {exc}")
+        print(f"[AdsbLive] {exc}")
         return []
 
     out = []
-    for s in (data.get("states") or []):
-        if s[5] is None or s[6] is None:
+    for s in (data.get("ac") or []):
+        lat, lon = s.get("lat"), s.get("lon")
+        if lat is None or lon is None:
             continue
         ac = Aircraft()
-        ac.icao24    = (s[0] or "??????").strip()
-        ac.callsign  = ((s[1] or "").strip()) or ac.icao24
-        ac.country   = s[2] or "???"
-        ac.lon       = float(s[5])
-        ac.lat       = float(s[6])
-        ac.alt_m     = float(s[7]) if s[7] is not None else 0.0
-        ac.on_ground = bool(s[8])
-        ac.speed_ms  = float(s[9]) if s[9] is not None else 0.0
-        ac.heading   = float(s[10]) if s[10] is not None else 0.0
+        hexid = (s.get("hex") or "??????").lstrip("~")
+        ac.icao24    = hexid
+        ac.callsign  = (s.get("flight") or "").strip() or ac.icao24
+        ac.country   = s.get("t") or "???"   # aircraft type (no country field here)
+        ac.lat       = float(lat)
+        ac.lon       = float(lon)
+        alt          = s.get("alt_baro")
+        ac.on_ground = (alt == "ground")
+        ac.alt_m     = 0.0 if ac.on_ground or alt is None else float(alt) * 0.3048
+        ac.speed_ms  = float(s.get("gs") or 0.0) * 0.514444
+        ac.heading   = float(s.get("track") or 0.0)
         out.append(ac)
 
-    print(f"[OpenSky] {len(out)} aircraft at {radius_km:.0f} km")
+    print(f"[AdsbLive] {len(out)} aircraft at {radius_km:.0f} km")
     return out
 
 

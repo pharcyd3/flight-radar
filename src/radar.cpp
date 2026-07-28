@@ -253,8 +253,8 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     int mm = mapMode();
     // While following, never use the raster map: it would recompose ("loading
     // map...") every time the tracked plane drifts into new tiles, which both
-    // interrupts the chase and competes with OpenSky for the scarce heap the
-    // HTTPS handshake needs (a failed poll then looks like the target vanished
+    // interrupts the chase and competes with the flight-data fetch for the scarce
+    // heap the HTTPS handshake needs (a failed poll then looks like the target vanished
     // and drops the follow). The offline vector map re-centres instantly.
     if (_following && mm == MAP_FULL) mm = MAP_LOFI;
 
@@ -882,29 +882,18 @@ void RadarDisplay::drawApiStatusOverlay() {
     d.setTextDatum(MC_DATUM);
     d.setTextSize(1);
     d.setTextColor(COL_RING_LBL, COL_OVERLAY);
-    d.drawString("API STATUS", CX, 78);
-
-    // Credential / tier indicator — whether an API key is configured and valid.
-    const char* authTxt;
-    uint16_t    authCol;
-    switch (s.auth) {
-        case ApiAuth::Authenticated: authTxt = "API KEY: VALID";      authCol = COL_RING_LBL; break;
-        case ApiAuth::Failed:        authTxt = "API KEY: INVALID";    authCol = COL_HOME;     break;
-        default:                     authTxt = "NO KEY - FREE TIER";  authCol = COL_STATUS;   break;
-    }
-    d.setTextColor(authCol, COL_OVERLAY);
-    d.drawString(authTxt, CX, 95);
+    d.drawString("API STATUS", CX, 84);
 
     d.setTextSize(2);
     d.setTextColor(col, COL_OVERLAY);
-    d.drawString(label, CX, 116);
+    d.drawString(label, CX, 110);
 
     char buf[48];
     d.setTextSize(1);
     d.setTextColor(COL_STATUS, COL_OVERLAY);
 
     // Reason / aircraft count from the last attempt
-    d.drawString(s.detail[0] ? s.detail : "-", CX, 138);
+    d.drawString(s.detail[0] ? s.detail : "-", CX, 136);
 
     // HTTP code + payload size
     if (s.httpCode)
@@ -914,11 +903,11 @@ void RadarDisplay::drawApiStatusOverlay() {
     d.drawString(buf, CX, 154);
 
     // Age of last attempt + effective poll interval, so the chosen cadence is
-    // visible (e.g. "12s ago  every 22s").
+    // visible (e.g. "12s ago  every 8s").
     if (s.lastMs) {
         unsigned long age = (millis() - s.lastMs) / 1000UL;
         snprintf(buf, sizeof(buf), "%lus ago  every %lus",
                  age, refreshIntervalMs() / 1000UL);
-        d.drawString(buf, CX, 170);
+        d.drawString(buf, CX, 172);
     }
 }

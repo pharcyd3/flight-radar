@@ -9,8 +9,8 @@
 
 // Both responses here are small (a few hundred bytes) and only ever fetched
 // one-shot at setup time, while the heap is still fresh — so unlike the big
-// OpenSky poll (which streams via flash to dodge fragmentation) these can safely
-// parse straight from the stream into a modest JsonDocument.
+// recurring flight-data poll (which streams via flash to dodge fragmentation)
+// these can safely parse straight from the stream into a modest JsonDocument.
 
 static void copyPlace(char* place, size_t placeLen, const char* src) {
     if (!place || placeLen == 0) return;
@@ -91,7 +91,7 @@ bool geocodeCity(const char* query, float& lat, float& lon,
     url += urlEncode(query);
 
     WiFiClientSecure client;
-    client.setInsecure();               // skip cert verification (matches map/opensky)
+    client.setInsecure();               // skip cert verification (matches map/adsblive)
     client.setTimeout(10);
     HTTPClient http;
     http.setTimeout(9000);

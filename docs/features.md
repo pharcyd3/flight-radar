@@ -4,7 +4,7 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 
 ## Live radar display
 
-- **Real ADS-B traffic** from [OpenSky Network](https://opensky-network.org/), plotted by position around a home location you choose.
+- **Real ADS-B traffic** from [airplanes.live](https://airplanes.live/)'s free community network, plotted by position around a home location you choose.
 - **Five zoom ranges** — 10, 25, 50, 100, and 200&nbsp;km radius, selected with the rotary encoder. A row of dots near the top shows the current level at a glance.
 - **Smooth motion (dead reckoning)** — between polls, airborne aircraft *glide* along their heading at their reported ground speed instead of jumping on each refresh. Position is extrapolated for up to two minutes, so a missed poll never flings a stale mark across the screen.
 - **Heading arrows** — moving aircraft show a short arrow in their direction of travel.
@@ -20,8 +20,8 @@ See [Using the Device](using-the-device.md).
 
 Three selectable **Map** modes (Settings → Map):
 
+- **Lo-fi** *(default)* — an **offline vector map**: coastlines, national borders, rivers, and lakes drawn as themed lines, plus labels for major cities and airports. The whole world is baked into the firmware, so it works **anywhere with no network**, switches instantly, and stays smooth even while following a moving aircraft.
 - **Full** — a real [OpenStreetMap](https://www.openstreetmap.org/) raster-tile street map, fetched per location/zoom and cached to flash. See [Map & Caching](map-caching.md).
-- **Lo-fi** — an **offline vector map**: coastlines, national borders, rivers, and lakes drawn as themed lines, plus labels for major cities. The whole world is baked into the firmware, so it works **anywhere with no network**, switches instantly, and stays smooth even while following a moving aircraft.
 - **Off** — a plain themed background (classic radar-scope look).
 
 Supporting behaviour:
@@ -33,12 +33,12 @@ Supporting behaviour:
 
 - **Tap to inspect** — tap any aircraft for a detail panel: callsign, ICAO24 address, altitude, speed, heading, country of registration, and a **GND** flag when on the ground.
 - **Rotate to cycle** — with an aircraft selected, the dial steps the selection through the visible aircraft instead of zooming.
-- **Follow mode** — tap **FOLLOW** in the detail panel to lock onto an aircraft. The view re-centres on it (a reticle marks the tracked point and home becomes an offset marker), other traffic drifts past, and the map lazily re-centres as it travels. The dial zooms while following; tap **STOP FOLLOW**, tap elsewhere, or wait for the aircraft to leave coverage to exit. See [Using the Device](using-the-device.md#following-an-aircraft).
+- **Follow mode** — tap **FOLLOW** in the detail panel to lock onto an aircraft. The view stays glued to it (a reticle marks the tracked point and home becomes an offset marker) as it moves. Follow is a locked mode — ordinary taps don't back out of it — with its own controls: **UNFOLLOW** to stop, **HIDE OTHERS** to declutter down to just the tracked plane, and **drag anywhere to pan** the view (e.g. to see something the buttons are covering); a plain tap with no drag recentres. Ends automatically if the aircraft leaves coverage. See [Using the Device](using-the-device.md#following-an-aircraft).
 - **Emergency squawk detection** — 7500 (hijack), 7600 (radio failure), and 7700 (general emergency) are highlighted in red with a bezel ring-flash and an optional buzzer. See [Emergency Alerts](emergency-alerts.md).
 
 ## Location & setup
 
-- **Captive-portal setup** — first boot broadcasts a `Franks-Flight-Radar-Setup` WiFi network with a browser-based wizard for WiFi, location, and OpenSky credentials. See [Getting Started](getting-started.md).
+- **Captive-portal setup** — first boot broadcasts a `Franks-Flight-Radar-Setup` WiFi network with a browser-based wizard for WiFi and location. See [Getting Started](getting-started.md).
 - **IP auto-detect** — leave the location fields blank and the device locates itself (approximately, from its public IP) once online. No coordinate lookup needed.
 - **Place-name search** — type a place (e.g. `Berlin`) instead of coordinates; it's geocoded via OpenStreetMap after the device reconnects.
 - **Manual coordinates** — enter precise decimal lat/lon if you prefer.
@@ -47,10 +47,10 @@ Supporting behaviour:
 
 ## Data & connectivity
 
-- **OpenSky OAuth2** — runs authenticated (higher quota) with an API client, or anonymously without one. See [OpenSky API Setup](opensky-setup.md).
-- **Adaptive refresh** — an **Auto** rate spreads the applicable daily quota evenly across 24&nbsp;hours (≈22&nbsp;s authenticated, ≈240&nbsp;s anonymous), or pick a fixed 10/20/30&nbsp;s.
-- **Rate-limit handling** — respects OpenSky's `429` retry-after backoff instead of hammering the API.
-- **API status panel** — tap the poll icon for the last request's outcome, HTTP code, payload size, tier (key valid / invalid / anonymous), and age.
+- **Keyless flight data** — [airplanes.live](https://airplanes.live/)'s free community ADS-B API. No account, no API key, nothing to configure.
+- **Selectable refresh rate** — 5/8/15/30&nbsp;s, default 8&nbsp;s (well inside airplanes.live's fair-use guidance).
+- **Rate-limit handling** — respects a `429` retry-after backoff instead of hammering the API.
+- **API status panel** — tap the poll icon for the last request's outcome, HTTP code, payload size, and age.
 - **Memory-safe fetching** — large responses stream via a flash scratch file and parse one aircraft at a time, so the no-PSRAM device never runs out of RAM.
 - **WiFi auto-reconnect** — reconnects automatically if the connection drops.
 
@@ -68,6 +68,5 @@ See [Settings Reference](settings-reference.md).
 ## System & reliability
 
 - **Persistent settings** — every option saves to flash immediately and survives reboots and firmware updates.
-- **Factory reset** — hold the encoder button 3&nbsp;seconds, or use the hold-to-confirm menu item, to wipe WiFi/credentials/location/favourites and re-run setup.
-- **Serial credential command** — set OpenSky credentials over USB (`SETCREDS:<id>:<secret>`) without the portal.
+- **Factory reset** — hold the encoder button 3&nbsp;seconds, or use the hold-to-confirm menu item, to wipe WiFi credentials, location, and favourites, then re-run setup.
 - **Desktop emulator** — a Python/pygame emulator mirrors the on-device UI for development. See [Building From Source](development.md).

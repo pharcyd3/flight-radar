@@ -42,7 +42,6 @@ then open:
 2. Open **`192.168.4.1`** in a browser — this is [WiFiManager](https://github.com/tzapu/WiFiManager)'s captive portal.
 3. Choose **Configure WiFi**, select your home network, and enter its password.
 4. On the same form, you'll also see:
-    - **OpenSky client_id** / **OpenSky client_secret** *(optional at this stage — see [OpenSky API Setup](opensky-setup.md))*
     - **Home location** — the centre point of your radar. You have three options, easiest first:
         - **Leave everything blank** to have the device auto-detect your approximate location from your network once it's online (city-level; a VPN will throw it off).
         - Type a **place name** in the *Place name* field (e.g. `Berlin`, `Paris, France`) — it's geocoded to coordinates after the device reconnects. A place name always wins over the coordinate fields.
@@ -53,9 +52,9 @@ If the portal times out (5 minutes) without a successful connection, the device 
 
 ## 3. You should now see the radar
 
-Once connected, Frank's Flight Radar fetches its first batch of map tiles (a "loading map..." message appears briefly) and starts polling OpenSky. If you haven't set up API credentials yet, it runs **anonymously** — this works, but is quota-limited (see [OpenSky API Setup](opensky-setup.md) for why you'll want real credentials for reliable use).
+Once connected, Frank's Flight Radar starts polling [airplanes.live](https://airplanes.live/) straight away — no account or API key needed, so live traffic should appear within a few seconds. By default it draws on the offline lo-fi vector map (instant, no network fetch); switch to the real street map any time under **Settings → Map** (which does fetch OpenStreetMap tiles the first time you view a new area — a brief "loading map..." message appears while it does).
 
 ## Resetting later
 
-- **Change WiFi/location only**: open the on-device Settings menu (short-press the encoder button) → **Location & API Keys**. This re-opens the same captive portal without erasing anything else.
-- **Full factory reset**: hold the encoder button down for 3 seconds. This wipes WiFi credentials, OpenSky login, home location, and saved favourites, then reboots into first-boot setup. The same reset is also available as a menu item under **Settings → Factory Reset** (hold-to-confirm, so it can't be triggered by accident).
+- **Change WiFi/location only**: open the on-device Settings menu (short-press the encoder button) → **Location & Favourites**. This re-opens the same captive portal without erasing anything else.
+- **Full factory reset**: hold the encoder button down for 3 seconds. This wipes WiFi credentials, home location, and saved favourites, then reboots into first-boot setup. The same reset is also available as a menu item under **Settings → Factory Reset** (hold-to-confirm, so it can't be triggered by accident).

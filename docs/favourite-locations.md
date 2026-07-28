@@ -20,4 +20,4 @@ As soon as you save named favourites, Frank's Flight Radar immediately fetches a
 2. Rotate to highlight the favourite you want (empty slots are shown as "Favourite N (empty)" and do nothing if selected).
 3. Press to make it your active home location. The radar immediately re-centres and re-fetches traffic around the new location.
 
-Switching favourites does **not** change your saved WiFi credentials or OpenSky API keys — only the home coordinates used for the radar.
+Switching favourites does **not** change your saved WiFi credentials — only the home coordinates used for the radar.

@@ -109,7 +109,7 @@ static bool fetchTileToFile(WiFiClientSecure& client, HTTPClient& http,
 
 bool MapLayer::compose(float lat, float lon, float r) {
     // Make sure the PNG decoder is allocated (it's freed between precache rounds
-    // to give OpenSky polls headroom). If it can't be re-primed on this heap the
+    // to give flight-data polls headroom). If it can't be re-primed on this heap the
     // tiles can't be decoded, so bail — the radar falls back to a solid bg.
     if (!ensureDecoder()) return false;
 
@@ -193,8 +193,8 @@ bool MapLayer::compose(float lat, float lon, float r) {
     _composeComplete = (fail == 0 && ok > 0);
 
     // NOTE: we deliberately do NOT release the PNG decoder here (nor in the
-    // OpenSky poll — see opensky.cpp). The decoder's scratch buffer is a single
-    // ~45 KB contiguous allocation that pngle keeps and reuses once created.
+    // flight-data poll — see adsblive.cpp). The decoder's scratch buffer is a
+    // single ~45 KB contiguous allocation that pngle keeps and reuses once created.
     // On this no-PSRAM board the largest contiguous free block once WiFi/TLS
     // are up is only ~31 KB, so if the buffer is ever freed it can NEVER be
     // re-allocated — that was the "maps only load at one zoom" bug. It's
@@ -309,7 +309,7 @@ void MapLayer::begin() {
 
 // (Re)allocate the pngle scratch buffer if it's been released. Priming decodes a
 // trivial 1x1 PNG, which forces the ~45 KB allocation. Runs from compose(),
-// which only happens when the loop is idle (no OpenSky TLS active), so the
+// which only happens when the loop is idle (no flight-data TLS active), so the
 // contiguous block is available even though a poll couldn't spare it.
 bool MapLayer::ensureDecoder() {
     if (_decoderReady) return true;

@@ -7,29 +7,6 @@
 #include <WiFiManager.h>
 #include <Preferences.h>
 
-// ── Stored credentials ────────────────────────────────────────────────────────
-// OpenSky OAuth2 API-client credentials (client_id / client_secret).
-static char _osUser[64] = "";   // client_id
-static char _osPass[64] = "";   // client_secret
-
-const char* openskyClientId()     { return _osUser; }
-const char* openskyClientSecret() { return _osPass; }
-
-void setOpenSkyCredentials(const char* clientId, const char* clientSecret) {
-    strncpy(_osUser, clientId, sizeof(_osUser) - 1);
-    _osUser[sizeof(_osUser) - 1] = '\0';
-    strncpy(_osPass, clientSecret, sizeof(_osPass) - 1);
-    _osPass[sizeof(_osPass) - 1] = '\0';
-
-    Preferences prefs;
-    prefs.begin("flightdial", /*readOnly=*/false);
-    prefs.putString("os_cid",    _osUser);
-    prefs.putString("os_secret", _osPass);
-    prefs.end();
-
-    Serial.printf("[Provision] OpenSky client_id set via serial: %s\n", _osUser);
-}
-
 // ── Stored home location ──────────────────────────────────────────────────────
 static float _homeLat = DEFAULT_HOME_LAT;
 static float _homeLon = DEFAULT_HOME_LON;
@@ -188,11 +165,9 @@ bool runDetectLocation() {
 // ── Provisioning ──────────────────────────────────────────────────────────────
 
 void runProvisioning() {
-    // Load any previously saved OpenSky creds + home location from NVS
+    // Load any previously saved home location from NVS
     Preferences prefs;
     prefs.begin("flightdial", /*readOnly=*/false);
-    prefs.getString("os_cid",    _osUser, sizeof(_osUser));
-    prefs.getString("os_secret", _osPass, sizeof(_osPass));
     _homeLat = prefs.getFloat("home_lat", DEFAULT_HOME_LAT);
     _homeLon = prefs.getFloat("home_lon", DEFAULT_HOME_LON);
     _homeSet = prefs.getBool("home_set", false);
@@ -205,12 +180,6 @@ void runProvisioning() {
         snprintf(key, sizeof(key), "fav%d_lon", i);
         _favLon[i] = prefs.getFloat(key, 0.0f);
     }
-
-    // Custom portal fields (OpenSky OAuth2 creds optional, location pre-filled)
-    WiFiManagerParameter osUserParam(
-        "os_cid", "OpenSky client_id (optional)", _osUser, 63);
-    WiFiManagerParameter osPassParam(
-        "os_secret", "OpenSky client_secret (optional)", "", 63);
 
     // First boot (home never set): leave the coordinate fields blank so the user
     // can just type a place name — or leave everything blank — and let the device
@@ -228,8 +197,6 @@ void runProvisioning() {
         "home_lon", "Home longitude (optional, overrides place)", lonStr, 15);
 
     WiFiManager wm;
-    wm.addParameter(&osUserParam);
-    wm.addParameter(&osPassParam);
     wm.addParameter(&placeParam);
     wm.addParameter(&homeLatParam);
     wm.addParameter(&homeLonParam);
@@ -239,13 +206,8 @@ void runProvisioning() {
         showSetupScreen();
     });
 
-    // Save OpenSky creds + home location to NVS when the user submits the form
+    // Save home location to NVS when the user submits the form
     wm.setSaveParamsCallback([&]() {
-        strncpy(_osUser, osUserParam.getValue(), sizeof(_osUser) - 1);
-        strncpy(_osPass, osPassParam.getValue(), sizeof(_osPass) - 1);
-        prefs.putString("os_cid",    _osUser);
-        prefs.putString("os_secret", _osPass);
-
         // A typed place name is an explicit choice, so it wins — stash it to
         // geocode once we're back online (we're offline in the portal AP now).
         // Otherwise use manually entered coordinates if they're valid.
@@ -288,9 +250,8 @@ void runProvisioning() {
         ESP.restart();
     }
 
-    Serial.printf("[Provision] Connected: %s  OpenSky client_id: %s  Home: %.6f, %.6f\n",
+    Serial.printf("[Provision] Connected: %s  Home: %.6f, %.6f\n",
                   WiFi.localIP().toString().c_str(),
-                  _osUser[0] ? _osUser : "(anonymous)",
                   _homeLat, _homeLon);
 
     // Now that we're online, geocode any typed place / IP-auto-detect if the user
@@ -301,13 +262,6 @@ void runProvisioning() {
 void runLocationPortal() {
     Preferences prefs;
     prefs.begin("flightdial", /*readOnly=*/false);
-
-    // OpenSky OAuth2 creds — editable here so keys can be added/changed without
-    // a factory reset. Secret prefills blank; leave blank to keep the stored one.
-    WiFiManagerParameter osUserParam(
-        "os_cid", "OpenSky client_id (optional)", _osUser, 63);
-    WiFiManagerParameter osPassParam(
-        "os_secret", "OpenSky client_secret (blank = keep)", "", 63);
 
     char latStr[16], lonStr[16];
     snprintf(latStr, sizeof(latStr), "%.6f", _homeLat);
@@ -344,8 +298,6 @@ void runLocationPortal() {
     }
 
     WiFiManager wm;
-    wm.addParameter(&osUserParam);
-    wm.addParameter(&osPassParam);
     wm.addParameter(&placeParam);
     wm.addParameter(&homeLatParam);
     wm.addParameter(&homeLonParam);
@@ -360,14 +312,6 @@ void runLocationPortal() {
     wm.setBreakAfterConfig(true);  // return once saved, don't linger in the portal
 
     wm.setSaveParamsCallback([&]() {
-        // OpenSky creds: client_id prefills current value so it persists;
-        // client_secret prefills blank, so only overwrite when something's typed.
-        strncpy(_osUser, osUserParam.getValue(), sizeof(_osUser) - 1);
-        const char* newSecret = osPassParam.getValue();
-        if (newSecret[0])
-            strncpy(_osPass, newSecret, sizeof(_osPass) - 1);
-        prefs.putString("os_cid",    _osUser);
-        prefs.putString("os_secret", _osPass);
 
         // Typed place name wins (resolved after reconnect); otherwise use coords.
         const char* placeVal = placeParam.getValue();
@@ -466,7 +410,7 @@ void runLocationPortal() {
 }
 
 // ── Factory reset ─────────────────────────────────────────────────────────────
-// Wipes WiFi credentials, OpenSky login, home location, and saved favourites,
+// Wipes WiFi credentials, home location, and saved favourites,
 // then reboots into first-boot provisioning. Does not return.
 void factoryReset() {
     Serial.println("[Provision] Factory reset triggered");

@@ -81,14 +81,15 @@ The lo-fi map is deliberately low-detail — it's meant as a lightweight geograp
 
 ## Refresh rate
 
-How often Frank's Flight Radar polls OpenSky for updated positions.
+How often Frank's Flight Radar polls [airplanes.live](https://airplanes.live/) for updated positions.
 
 | Value | Behaviour |
 |---|---|
-| **Auto** *(default)* | Spreads the applicable daily quota evenly across 24&nbsp;hours — about every **22&nbsp;s** with an OpenSky API client, or every **240&nbsp;s** anonymously. Adapts automatically when you add or remove credentials. |
-| 10s / 20s / 30s | A fixed interval. |
+| 5s | Fastest option — livelier motion, more requests |
+| **8s** *(default)* | A brisk cadence with plenty of headroom under airplanes.live's fair-use guidance (~1 request/second) |
+| 15s / 30s | Slower options, for anyone who'd rather poll less |
 
-See [OpenSky API Setup](opensky-setup.md#choosing-a-refresh-rate) for the quota maths — **Auto** is the safest choice, and of the fixed rates only 30&nbsp;s reliably lasts a full day under a standard authenticated account's quota.
+There's no account, credit, or quota system to manage — pick whichever feels right. Slower rates make dead-reckoning interpolation do more of the visible work between polls; see [Using the Device](using-the-device.md) for how aircraft glide between updates.
 
 ## Buzz on Emergency
 
@@ -114,16 +115,16 @@ Because it draws on the offline [lo-fi map](map-caching.md#the-lo-fi-vector-map)
 
 ## Detect location
 
-Re-detects your home location from the device's public IP address — no typing, no captive portal. Useful after moving, or as a quick way to re-centre. Accuracy is city-level and can be thrown off by a VPN; for a precise fix, use **Location & API Keys** (place-name search or manual coordinates) instead.
+Re-detects your home location from the device's public IP address — no typing, no captive portal. Useful after moving, or as a quick way to re-centre. Accuracy is city-level and can be thrown off by a VPN; for a precise fix, use **Location & Favourites** (place-name search or manual coordinates) instead.
 
-## Location & API Keys
+## Location & Favourites
 
-Opens the WiFi captive portal (`Franks-Flight-Radar-Setup` / `192.168.4.1`) to change your home location, saved favourite locations, or OpenSky API credentials — **without** erasing your saved WiFi connection. You can set the location three ways: **leave it blank** to auto-detect from your network, type a **place name** (e.g. `Berlin`) to geocode it, or enter **coordinates** directly. See [Getting Started](getting-started.md) and [OpenSky API Setup](opensky-setup.md).
+Opens the WiFi captive portal (`Franks-Flight-Radar-Setup` / `192.168.4.1`) to change your home location or edit your three saved favourite locations (including naming them) — **without** erasing your saved WiFi connection. You can set the location three ways: **leave it blank** to auto-detect from your network, type a **place name** (e.g. `Berlin`) to geocode it, or enter **coordinates** directly. See [Getting Started](getting-started.md).
 
 ## Saved Locations
 
-Opens a picker for your three saved favourite locations (set via **Location & API Keys**). Rotate to highlight one, press to make it your active home location. See [Favourite Locations](favourite-locations.md).
+Opens a picker for your three saved favourite locations (set via **Set location** or **Location & Favourites**). Rotate to highlight one, press to make it your active home location. See [Favourite Locations](favourite-locations.md).
 
 ## Factory Reset
 
-Hold-to-confirm (3 seconds) reset that wipes WiFi credentials, OpenSky login, home location, and saved favourites, then reboots into first-boot setup. Releasing early, tapping the screen, or 15 seconds of inactivity cancels it.
+Hold-to-confirm (3 seconds) reset that wipes WiFi credentials, home location, and saved favourites, then reboots into first-boot setup. Releasing early, tapping the screen, or 15 seconds of inactivity cancels it.
