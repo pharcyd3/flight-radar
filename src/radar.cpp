@@ -93,11 +93,33 @@ void RadarDisplay::begin() {
 void RadarDisplay::worldToScreen(float lat, float lon,
                                   float cLat, float cLon, float radiusKm,
                                   int& sx, int& sy) {
-    float cLatRad = cLat * (float)M_PI / 180.0f;
-    float dx = (lon - cLon) * cosf(cLatRad) * EARTH_R * ((float)M_PI / 180.0f);
-    float dy = (lat - cLat) * EARTH_R * ((float)M_PI / 180.0f);
+    // Azimuthal-equidistant projection centred on (cLat,cLon): straight-line
+    // (great-circle) distance from the centre maps linearly to screen radius, and
+    // bearing is preserved — exactly the model a range-ring radar assumes. At the
+    // small distances of normal zoom it is numerically identical to a flat
+    // lat/lon projection, but unlike that flat approximation it stays correct all
+    // the way out to a whole-earth view (used by follow mode's extended zoom).
+    const float RAD = (float)M_PI / 180.0f;
+    float p0 = cLat * RAD, l0 = cLon * RAD;
+    float p  = lat  * RAD, dl = (lon - cLon) * RAD;
+
+    float sinp0 = sinf(p0), cosp0 = cosf(p0);
+    float sinp  = sinf(p),  cosp  = cosf(p);
+    float cosdl = cosf(dl), sindl = sinf(dl);
+
+    float cosc = sinp0 * sinp + cosp0 * cosp * cosdl;   // cos(angular distance)
+    if (cosc >  1.0f) cosc =  1.0f;
+    if (cosc < -1.0f) cosc = -1.0f;
+    float c = acosf(cosc);
+    float k = (c < 1e-6f) ? 1.0f : c / sinf(c);         // → 1 as c → 0
+
+    float east  = k * cosp * sindl;
+    float north = k * (cosp0 * sinp - sinp0 * cosp * cosdl);
+    float dx = EARTH_R * east;                          // km east / north of centre
+    float dy = EARTH_R * north;
+
     sx = CX + (int)((dx / radiusKm) * PLOT_R);
-    sy = CY - (int)((dy / radiusKm) * PLOT_R);   // screen Y is inverted
+    sy = CY - (int)((dy / radiusKm) * PLOT_R);          // screen Y is inverted
 }
 
 void RadarDisplay::effectivePos(const Aircraft& ac, float& lat, float& lon) const {
@@ -273,7 +295,8 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
 
     // Airports over the map (raster Full or Lo-fi), beneath the aircraft. The
     // lo-fi path already draws its own city labels; airports are added on both.
-    if (mm != MAP_OFF) drawAirports(cLat, cLon, radiusKm);
+    // Skipped when zoomed way out (follow's global levels) — too dense to read.
+    if (mm != MAP_OFF && radiusKm <= 1500.0f) drawAirports(cLat, cLon, radiusKm);
 
     // Breadcrumb trail for the selected aircraft, drawn under the marks.
     if (showTrails() && selectedIdx >= 0 && selectedIdx < (int)aircraft.size())
@@ -345,40 +368,60 @@ void RadarDisplay::drawTrail(const Aircraft& ac,
 // Append the current reported positions to each aircraft's trail, keyed by
 // icao24. Called once per successful fetch (not per frame — trails are the
 // *reported* breadcrumbs; interpolation fills in between them).
-void RadarDisplay::recordHistory(const std::vector<Aircraft>& aircraft) {
-    _fetchSeq++;
-    for (const Aircraft& ac : aircraft) {
-        int slot = trailSlot(ac.icao24);
-        if (slot < 0) {
-            // No slot yet — take a free one, else evict the least-recently-seen.
-            int oldest = 0;
-            uint32_t oldestSeen = 0xFFFFFFFFu;
-            for (int i = 0; i < MAX_TRAILS; ++i) {
-                if (_trails[i].count == 0) { slot = i; break; }
-                if (_trails[i].lastSeen < oldestSeen) { oldestSeen = _trails[i].lastSeen; oldest = i; }
+// Append one aircraft's current position to its trail (allocating/evicting a
+// slot as needed). Crucially, a slot already updated *this* poll is never evicted
+// — otherwise, in a scene with more aircraft than trail slots, planes would wipe
+// each other's trails within a single poll (which is what made the followed
+// plane's trail vanish over a busy airport). Overflow aircraft simply get no
+// trail; only the selected one is ever drawn, and it's recorded first (below).
+static void recordTrailPoint(const Aircraft& ac) {
+    int slot = trailSlot(ac.icao24);
+    if (slot < 0) {
+        int oldest = -1;
+        uint32_t oldestSeen = 0xFFFFFFFFu;
+        for (int i = 0; i < MAX_TRAILS; ++i) {
+            if (_trails[i].count == 0) { slot = i; break; }
+            if (_trails[i].lastSeen != _fetchSeq && _trails[i].lastSeen < oldestSeen) {
+                oldestSeen = _trails[i].lastSeen; oldest = i;
             }
-            if (slot < 0) slot = oldest;
-            Trail& nt = _trails[slot];
-            strncpy(nt.icao, ac.icao24, sizeof(nt.icao) - 1);
-            nt.icao[sizeof(nt.icao) - 1] = '\0';
-            nt.count = 0;
-            nt.head  = 0;
         }
-
-        Trail& t = _trails[slot];
-        // Skip a new point if the aircraft has barely moved (~<50 m), so a
-        // near-stationary target doesn't pile identical breadcrumbs.
-        if (t.count) {
-            int last = (t.head + TRAIL_LEN - 1) % TRAIL_LEN;
-            float dlat = ac.lat - t.lat[last], dlon = ac.lon - t.lon[last];
-            if (dlat * dlat + dlon * dlon < 2.5e-7f) { t.lastSeen = _fetchSeq; continue; }
-        }
-        t.lat[t.head] = ac.lat;
-        t.lon[t.head] = ac.lon;
-        t.head = (t.head + 1) % TRAIL_LEN;
-        if (t.count < TRAIL_LEN) t.count++;
-        t.lastSeen = _fetchSeq;
+        if (slot < 0) slot = oldest;
+        if (slot < 0) return;   // every slot already used this poll — skip overflow
+        Trail& nt = _trails[slot];
+        strncpy(nt.icao, ac.icao24, sizeof(nt.icao) - 1);
+        nt.icao[sizeof(nt.icao) - 1] = '\0';
+        nt.count = 0;
+        nt.head  = 0;
     }
+
+    Trail& t = _trails[slot];
+    // Skip a new point if the aircraft has barely moved (~<50 m), so a
+    // near-stationary target doesn't pile identical breadcrumbs.
+    if (t.count) {
+        int last = (t.head + TRAIL_LEN - 1) % TRAIL_LEN;
+        float dlat = ac.lat - t.lat[last], dlon = ac.lon - t.lon[last];
+        if (dlat * dlat + dlon * dlon < 2.5e-7f) { t.lastSeen = _fetchSeq; return; }
+    }
+    t.lat[t.head] = ac.lat;
+    t.lon[t.head] = ac.lon;
+    t.head = (t.head + 1) % TRAIL_LEN;
+    if (t.count < TRAIL_LEN) t.count++;
+    t.lastSeen = _fetchSeq;
+}
+
+void RadarDisplay::recordHistory(const std::vector<Aircraft>& aircraft,
+                                 const char* focusIcao) {
+    _fetchSeq++;
+    // Record the focused (selected / followed) aircraft first, so it always
+    // secures a trail slot even when the scene has more aircraft than slots.
+    if (focusIcao && focusIcao[0]) {
+        for (const Aircraft& ac : aircraft)
+            if (strncmp(ac.icao24, focusIcao, sizeof(ac.icao24)) == 0) {
+                recordTrailPoint(ac);
+                break;
+            }
+    }
+    for (const Aircraft& ac : aircraft) recordTrailPoint(ac);
 }
 
 void RadarDisplay::drawBoot() {
@@ -432,11 +475,17 @@ void RadarDisplay::drawLoFiMap(float cLat, float cLon, float radiusKm) {
     float vMinLat = cLat - dLat, vMaxLat = cLat + dLat;
     float u = lofi::degPerUnit();
 
+    // At very wide (regional→global) zoom, nothing is culled, so drop the dense
+    // layers to keep the redraw quick and the picture legible: rivers/lakes and
+    // city labels just become clutter that far out, leaving coastlines + borders.
+    bool wide = radiusKm > 1500.0f;
+
     // ── Lines ──
     const uint8_t* p = lofi::linesBegin();
     lofi::Line L;
     for (uint32_t i = 0; i < lofi::lineCount(); ++i) {
         p = lofi::readLine(p, L);
+        if (wide && L.layer == lofi::LAYER_WATER) continue;   // skip water when zoomed way out
         if (L.maxLon * u < vMinLon || L.minLon * u > vMaxLon ||
             L.maxLat * u < vMinLat || L.minLat * u > vMaxLat) continue;   // cull
 
@@ -460,7 +509,7 @@ void RadarDisplay::drawLoFiMap(float cLat, float cLon, float radiusKm) {
     const uint8_t* c = lofi::citiesBegin();
     lofi::City C;
     int dots = 0;
-    for (uint32_t i = 0; i < lofi::cityCount() && dots < 40; ++i) {
+    for (uint32_t i = 0; !wide && i < lofi::cityCount() && dots < 40; ++i) {
         c = lofi::readCity(c, C);
         float lon = C.lon * u, lat = C.lat * u;
         if (lon < vMinLon || lon > vMaxLon || lat < vMinLat || lat > vMaxLat) continue;
@@ -603,8 +652,10 @@ void RadarDisplay::drawZoomDots(int zoomIdx) {
     static constexpr int DOT_R        = 3;
     static constexpr int DOT_R_ACTIVE = 4;
 
-    int startX = CX - (ZOOM_COUNT - 1) * DOT_GAP / 2;
-    for (int i = 0; i < ZOOM_COUNT; i++) {
+    // Follow mode exposes the extended zoom range, so show one dot per level of it.
+    int count = _following ? FOLLOW_ZOOM_COUNT : ZOOM_COUNT;
+    int startX = CX - (count - 1) * DOT_GAP / 2;
+    for (int i = 0; i < count; i++) {
         int  x      = startX + i * DOT_GAP;
         bool active = (i == zoomIdx);
         int  r      = active ? DOT_R_ACTIVE : DOT_R;

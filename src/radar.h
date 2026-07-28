@@ -34,7 +34,9 @@ public:
 
     // Records the current reported positions into each aircraft's breadcrumb
     // trail (matched across polls by icao24). Call once per successful fetch.
-    void recordHistory(const std::vector<Aircraft>& aircraft);
+    // focusIcao (the selected/followed aircraft, or "") is recorded first so it
+    // always keeps a trail slot even when the scene has more aircraft than slots.
+    void recordHistory(const std::vector<Aircraft>& aircraft, const char* focusIcao);
 
     // ── Follow mode ──────────────────────────────────────────────────────────
     // Tells the radar it's tracking an aircraft: centre reticle on the tracked

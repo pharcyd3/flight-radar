@@ -24,6 +24,23 @@ static const float ZOOM_STEPS[]  = { 10.0f, 25.0f, 50.0f, 100.0f, 200.0f };
 static const int   ZOOM_COUNT    = 5;
 static const int   ZOOM_DEFAULT  = 1;   // start at 25 km
 
+// Extended zoom range available only in follow mode: the first five match
+// ZOOM_STEPS (so entering follow keeps the current view), then continue out to a
+// whole-earth view. Follow renders on the offline lo-fi vector map, so the extra
+// levels cost nothing to draw; the data fetch stays bounded (see FETCH_MAX_KM) —
+// we keep pulling the tracked aircraft's local traffic while the map zooms out.
+// 20000 km ≈ half the earth's circumference, so the antipode sits at the plot
+// edge: the whole globe fills the radar circle.
+static const float FOLLOW_ZOOM_STEPS[] = {
+    10.0f, 25.0f, 50.0f, 100.0f, 200.0f, 500.0f, 1200.0f, 3000.0f, 8000.0f, 20000.0f
+};
+static const int   FOLLOW_ZOOM_COUNT   = 10;
+
+// Cap on the OpenSky/airplanes.live fetch radius regardless of display zoom, so
+// zooming the map out (in follow mode) never balloons the request. airplanes.live
+// allows up to 250 nm (~463 km); OpenSky bounding boxes stay modest too.
+static const float FETCH_MAX_KM = 460.0f;
+
 // ── Rotary encoder ────────────────────────────────────────────────────────────
 // M5Dial's rotary reports 4 raw quadrature ticks per physical detent/click.
 // Every encoder-driven UI must convert to detents via encoderDetent() before
@@ -112,7 +129,7 @@ static const float INTERP_MAX_S        = 120.0f;  // cap extrapolation at 2 min
 // connection ("SSL - Memory allocation failed") — MAX_TRAILS × TRAIL_LEN is a
 // fraction of that.
 static const int TRAIL_LEN  = 8;
-static const int MAX_TRAILS = 20;
+static const int MAX_TRAILS = 32;
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 // Min-altitude filter thresholds, metres (Off, 1,000/5,000/10,000/20,000 ft).

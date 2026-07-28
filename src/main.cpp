@@ -55,6 +55,23 @@ static bool  followHideOthers = false;
 static float viewLat() { return following ? followCenterLat : homeLat(); }
 static float viewLon() { return following ? followCenterLon : homeLon(); }
 
+// Display radius drives the on-screen map scale. Follow mode uses the extended
+// zoom table (out to a whole-earth view); normal mode uses the standard five.
+static float displayRadiusKm() {
+    if (following) return FOLLOW_ZOOM_STEPS[constrain(zoomIdx, 0, FOLLOW_ZOOM_COUNT - 1)];
+    return ZOOM_STEPS[constrain(zoomIdx, 0, ZOOM_COUNT - 1)];
+}
+
+// Fetch radius is decoupled from display zoom and capped, so zooming the map out
+// in follow mode keeps pulling only the tracked aircraft's local traffic rather
+// than ballooning the request (or exceeding airplanes.live's 250 nm limit).
+static float fetchRadiusKm() {
+    float d = displayRadiusKm();
+    return d < FETCH_MAX_KM ? d : FETCH_MAX_KM;
+}
+
+static int maxZoomIdx() { return (following ? FOLLOW_ZOOM_COUNT : ZOOM_COUNT) - 1; }
+
 // Banner label for the followed aircraft — its callsign while it's in the current
 // set, otherwise its icao24. Empty when not following.
 static const char* followLabel() {
@@ -68,7 +85,7 @@ static const char* followLabel() {
 // of truth for "paint the current frame" so every path stays consistent.
 static void redraw() {
     radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers);
-    radar.draw(aircraft, viewLat(), viewLon(), ZOOM_STEPS[zoomIdx], zoomIdx,
+    radar.draw(aircraft, viewLat(), viewLon(), displayRadiusKm(), zoomIdx,
                selectedAc, lastUpdateMs, fetchInProgress);
 }
 
@@ -87,6 +104,9 @@ static void startFollow(int idx) {
 static void stopFollow() {
     following = false;
     followIcao[0] = '\0';
+    // Extended zoom-out levels only exist in follow mode; clamp back into the
+    // normal range so we don't return to the home view zoomed out to the globe.
+    if (zoomIdx > ZOOM_COUNT - 1) zoomIdx = ZOOM_COUNT - 1;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -143,7 +163,7 @@ static void checkSerialCommands() {
     }
     if (line.startsWith("MAP:"))   { setMapMode(line.substring(4).toInt()); redraw(); return; }
     if (line.startsWith("SRC:"))   { setDataSource(line.substring(4).toInt()); lastFetchMs = 0; return; }
-    if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, ZOOM_COUNT - 1);
+    if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, maxZoomIdx());
                                      lastFetchMs = 0; redraw(); return; }
     if (line.startsWith("SEL:"))   { selectedAc = line.substring(4).toInt(); redraw(); return; }
     if (line == "FOLLOW")    { if (selectedAc >= 0) startFollow(selectedAc); redraw(); return; }
@@ -184,7 +204,7 @@ static void checkEmergency() {
 }
 
 static void doFetch() {
-    float r = ZOOM_STEPS[zoomIdx];
+    float r = fetchRadiusKm();   // capped; decoupled from display zoom in follow mode
 
     // Remember the selected aircraft by icao24: fetchAircraft() rebuilds the
     // vector (usually reordered, possibly shorter), so the bare index is stale
@@ -207,7 +227,7 @@ static void doFetch() {
     // Append this poll's reported positions to the breadcrumb trails (only on a
     // real success — a failed fetch clears `aircraft`, and we don't want an empty
     // frame wiping the history that interpolation and the selected-trail draw on).
-    if (ok) radar.recordHistory(aircraft);
+    if (ok) radar.recordHistory(aircraft, following ? followIcao : selIcao);
     lastUpdateMs = millis();
     fetchInProgress = false;
 
@@ -335,7 +355,7 @@ void loop() {
     if (screenshotPaused) return;
 
     if (settingsRequested()) {
-        float r = ZOOM_STEPS[zoomIdx];
+        float r = displayRadiusKm();
         runSettings(radar, aircraft, viewLat(), viewLon(), r, zoomIdx, lastUpdateMs, fetchInProgress);
         // The map cache is content-addressed by (lat,lon,radius), so a changed
         // home location just means the next radar.draw()/ensure() loads or
@@ -357,7 +377,7 @@ void loop() {
             // aircraft instead of changing zoom. Step once per detent, in the
             // turn direction, wrapping around the visible aircraft. (While
             // following, the dial zooms instead — the selection is locked.)
-            float r   = ZOOM_STEPS[zoomIdx];
+            float r   = displayRadiusKm();
             int   dir = zoomDelta > 0 ? 1 : -1;
             for (int k = 0; k < abs(zoomDelta); ++k) {
                 int nx = radar.nextSelectable(selectedAc, dir,
@@ -369,18 +389,19 @@ void loop() {
             return;
         }
 
-        zoomIdx = constrain(zoomIdx + zoomDelta, 0, ZOOM_COUNT - 1);
-        if (!following) selectedAc = -1;   // keep the locked target while following
-        doFetch();
-        lastFetchMs = millis();
-        return;  // redraw handled inside doFetch → we fall through on next loop
+        zoomIdx = constrain(zoomIdx + zoomDelta, 0, maxZoomIdx());
+        if (!following) { selectedAc = -1; doFetch(); lastFetchMs = millis(); return; }
+        // Following: zooming the map out only changes the display (the fetch box
+        // is capped), so just redraw — no need to re-poll for a wider area.
+        redraw();
+        return;
     }
 
     // ── Touch: select / deselect aircraft ────────────────────────────────────
     auto touch = M5Dial.Touch.getDetail();
     if (touch.wasPressed()) {
         lastInteractionMs = millis();
-        float r = ZOOM_STEPS[zoomIdx];
+        float r = displayRadiusKm();
         if (following) {
             // Follow is a mode: the only control is UNFOLLOW. Tapping anywhere
             // else on the map does nothing, so the chase can't be dropped by an
