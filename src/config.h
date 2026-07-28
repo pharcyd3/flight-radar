@@ -43,20 +43,33 @@ static inline long encoderDetent(long rawTicks) {
     return q;
 }
 
-// This hardware's raw encoder count has been observed to spontaneously
-// bounce by a tick with no further physical input — including reverting
-// back several hundred ms after a real click, on its own (e.g. raw 0 -> -1
-// on a real click, then -1 -> 0 again ~500ms later with nobody touching it).
-// Real clicks have also been observed to produce as few as 1 raw tick, the
-// same magnitude as the noise, so the two can't be told apart by size —
-// only by timing: EncoderDebouncer (encoder_debounce.h) requires a reading
-// to hold steady for this long before committing to it at all. The zoom
-// window is long enough to comfortably outlast the observed ~500ms bounce
-// (verified: no visible flip-back). The menu window is shorter — a wrong
-// menu step is low-stakes and trivially corrected by continuing to rotate,
-// and 1s per step felt sluggish for something that low-stakes.
-static const unsigned long ENC_STABLE_MS_ZOOM     = 1000UL;
-static const unsigned long ENC_STABLE_MS_MENU     = 350UL;
+// This hardware's raw encoder count has been observed to spontaneously bounce
+// by a tick with no physical input — including reverting several hundred ms
+// after a real click (e.g. raw 0 -> -1 on a click, then -1 -> 0 again on its
+// own). EncoderDebouncer (encoder_debounce.h) rejects that with hysteresis:
+// a step is only emitted once the raw count moves a full detent from the last
+// committed one, so a ±1-tick blip can never accumulate into a step. That
+// replaced a "hold steady for N ms before committing" scheme, which rejected
+// the same noise but charged its entire settling window (1 s for zoom) as
+// latency on every real click.
+//
+// This is only a floor on how fast steps may be emitted — a burst quicker than
+// a finger can physically click is noise, not a spin. Well below the ~80 ms of
+// a fast human detent, so it never throttles genuine input.
+static const unsigned long ENC_MIN_STEP_MS = 25UL;
+
+// How long after the last zoom step to wait before re-fetching at the new
+// radius. The fetch itself is off-thread (see aircraftfeed.h) so this costs no
+// interactivity — it purely avoids firing one API request per intermediate
+// level while the user spins through several in a row.
+static const unsigned long ZOOM_FETCH_DEBOUNCE_MS = 350UL;
+
+// Drop the aircraft set entirely if no fetch has succeeded for this long. A
+// failed fetch deliberately keeps the last good data on screen (a transient
+// blip shouldn't blank the radar), but past the dead-reckoning cap those marks
+// are frozen and increasingly wrong, so showing nothing becomes the honest
+// answer. Matches INTERP_MAX_S below.
+static const unsigned long FEED_STALE_CLEAR_MS = 120000UL;
 
 // ── Polling ───────────────────────────────────────────────────────────────────
 // airplanes.live is keyless with no credit/quota model (fair use ~1 req/s), so
@@ -74,7 +87,12 @@ static const int           REFRESH_DEFAULT      = 1;   // 8 s
 // startup so it never reallocates mid-heap later. A growing/moving vector was
 // splitting the single large free region so no contiguous ~40 KB block remained
 // for the next TLS handshake, stalling the feed after a big response.
-static const int MAX_AIRCRAFT = 120;
+// 80 rather than 120: two buffers of these are reserved up front (the UI's set
+// and the feed's hand-off buffer), so the cap is paid twice in permanently
+// committed heap, directly out of the contiguous block each TLS handshake
+// needs. A 200 km fetch over UK airspace returns ~30, so 80 keeps a wide
+// margin over real traffic while returning ~7 KB to that block.
+static const int MAX_AIRCRAFT = 80;
 
 // ── Dead-reckoning interpolation ───────────────────────────────────────────────
 // Between polls (22 s apart on the authenticated cadence) a mark would otherwise

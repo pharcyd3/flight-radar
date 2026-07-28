@@ -4,7 +4,13 @@
 struct Aircraft {
     char  icao24[8];    // e.g. "4ca7b5"
     char  callsign[12]; // e.g. "RYR123  " (trailing spaces stripped)
-    char  country[32];  // e.g. "Ireland"
+    // ICAO aircraft *type* designator, e.g. "A320" — 4 chars plus slack.
+    // (Named "country" from when the old data source carried one; airplanes.live
+    // doesn't, and the type is more useful for planespotting. Sized down from 32
+    // because MAX_AIRCRAFT of these are held in two reserved buffers, so every
+    // byte here costs ~2 × MAX_AIRCRAFT of the contiguous heap the TLS
+    // handshake needs. All writers bound themselves with sizeof().)
+    char  country[12];
     char  squawk[6];    // e.g. "7700" or "" if unknown
     float lat;
     float lon;

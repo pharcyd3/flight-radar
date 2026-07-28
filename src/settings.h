@@ -44,6 +44,10 @@ float minAltitudeM();
 bool showTrails();
 bool showRings();
 
+// Aircraft mark style: 0 = Dot (small circle + separate heading arrow),
+// 1 = Plane (a single heading-oriented triangle, no separate arrow).
+int aircraftIconStyle();
+
 // Map background mode. Full = OSM raster tiles; Lo-fi = embedded vector coastlines/
 // borders/rivers + city labels (offline, themed lines); Off = plain background.
 enum MapMode { MAP_FULL = 0, MAP_LOFI = 1, MAP_OFF = 2 };

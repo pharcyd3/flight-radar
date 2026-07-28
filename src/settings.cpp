@@ -22,6 +22,7 @@ struct SettingsState {
     uint8_t map           = MAP_LOFI;  // Full/Lo-fi/Off    — default Lo-fi
     uint8_t refresh       = REFRESH_DEFAULT;
     uint8_t buzzEmergency = 0;  // On/Off                  — 0 = On (matches prior default true)
+    uint8_t iconStyle     = 0;  // Dot/Plane                — 0 = Dot
 };
 static SettingsState _s;
 
@@ -33,6 +34,7 @@ int  trafficFilter()          { return _s.filter; }
 float minAltitudeM()          { return MIN_ALT_OPTIONS_M[_s.minalt]; }
 bool  showTrails()            { return _s.trails == 0; }
 bool  showRings()             { return _s.rings == 0; }
+int   aircraftIconStyle()     { return _s.iconStyle; }
 int   mapMode()               { return _s.map <= MAP_OFF ? _s.map : MAP_FULL; }
 void  setMapMode(int m)       { if (m >= 0 && m <= MAP_OFF) _s.map = (uint8_t)m; }
 unsigned long refreshIntervalMs() {
@@ -61,6 +63,7 @@ void loadSettings() {
     // every device the new 8 s default rather than reinterpreting an old index.
     _s.refresh       = prefs.getUChar("s_refresh3", REFRESH_DEFAULT);
     _s.buzzEmergency = prefs.getUChar("s_buzz",    0);
+    _s.iconStyle     = prefs.getUChar("s_icon",    0);
     prefs.end();
 }
 
@@ -77,6 +80,7 @@ static void saveSettings() {
     prefs.putUChar("s_map3",   _s.map);
     prefs.putUChar("s_refresh3",_s.refresh);
     prefs.putUChar("s_buzz",   _s.buzzEmergency);
+    prefs.putUChar("s_icon",  _s.iconStyle);
     prefs.end();
 }
 
@@ -145,6 +149,7 @@ static const char* OPTS_MINALT[]  = { "Off", "1,000ft", "5,000ft", "10,000ft", "
 static const char* OPTS_ONOFF[]   = { "On", "Off" };
 static const char* OPTS_MAP[]     = { "Full", "Lo-fi", "Off" };
 static const char* OPTS_REFRESH[] = { "5s", "8s", "15s", "30s" };
+static const char* OPTS_ICON[]    = { "Dot", "Plane" };
 
 enum class ItemKind : uint8_t { Cycle, Action, Danger };
 
@@ -175,6 +180,7 @@ static const MenuItem MENU_ITEMS[] = {
     { "Map",                 ItemKind::Cycle,  OPTS_MAP,     3, &_s.map },
     { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, REFRESH_OPTION_COUNT, &_s.refresh },
     { "Buzz on Emergency",   ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.buzzEmergency },
+    { "Aircraft icon",       ItemKind::Cycle,  OPTS_ICON,    2, &_s.iconStyle },
     { "Set location",        ItemKind::Action, nullptr,      0, nullptr },
     { "Detect location",     ItemKind::Action, nullptr,      0, nullptr },
     { "Location & Favourites", ItemKind::Action, nullptr,    0, nullptr },
@@ -256,7 +262,7 @@ static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& 
     drawLocationPickerPanel(idx);
 
     EncoderDebouncer enc;
-    enc.begin(ENC_STABLE_MS_MENU);
+    enc.begin();
     unsigned long lastActivity = millis();
 
     while (true) {
@@ -454,7 +460,7 @@ static void runSetLocation(RadarDisplay& radar) {
     int   idx = 2;   // start ~300 km (region level)
 
     EncoderDebouncer enc;
-    enc.begin(ENC_STABLE_MS_MENU);
+    enc.begin();
 
     // Swallow the button press that opened this screen.
     delay(200);
@@ -569,7 +575,7 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
     delay(50);
 
     EncoderDebouncer enc;
-    enc.begin(ENC_STABLE_MS_MENU);
+    enc.begin();
     unsigned long lastActivity = millis();
     unsigned long lastTickMs   = millis();
 

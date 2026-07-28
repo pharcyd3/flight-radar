@@ -92,9 +92,16 @@ bool geocodeCity(const char* query, float& lat, float& lon,
 
     WiFiClientSecure client;
     client.setInsecure();               // skip cert verification (matches map/adsblive)
-    client.setTimeout(10);
+    // See the timeout notes in adsblive.cpp — three different things. This read
+    // setTimeout(10), which is Stream::setTimeout: 10 ms per body read, not the
+    // 10 s intended. This one still runs synchronously (it's a one-shot from
+    // the settings menu, not the live poll), so the handshake bound matters for
+    // UI responsiveness here — but 10 s is still far below the 120 s default.
+    client.setTimeout(5000);             // ms, per-read of the body
+    client.setConnectionTimeout(10000);  // ms, TCP connect
+    client.setHandshakeTimeout(10);      // SECONDS, TLS handshake
     HTTPClient http;
-    http.setTimeout(9000);
+    http.setTimeout(10000);
     if (!http.begin(client, url)) return false;
     // Nominatim's usage policy requires an identifying User-Agent.
     http.addHeader("User-Agent", PRODUCT_UA);

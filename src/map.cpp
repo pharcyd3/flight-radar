@@ -145,7 +145,16 @@ bool MapLayer::compose(float lat, float lon, float r) {
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(10);
+    // See the timeout notes in adsblive.cpp — these are three different things.
+    // setTimeout() is Stream::setTimeout (milliseconds, per body read); it read
+    // 10 here, i.e. 10 ms rather than the 10 s intended, so a tile download that
+    // paused even momentarily was abandoned part-way. That is a direct cause of
+    // tiles arriving incomplete and leaving blank patches in a composed map.
+    client.setTimeout(5000);             // ms, per-read of the tile body
+    client.setConnectionTimeout(10000);  // ms, TCP connect
+    client.setHandshakeTimeout(10);      // SECONDS (default 120) — paid once,
+                                         // since setReuse() below keeps the
+                                         // TLS session open across tiles.
     HTTPClient http;
     http.setReuse(true);   // keep the TLS session open across tiles (same host)
 

@@ -6,6 +6,7 @@
 #include "aircraft.h"
 #include "apistatus.h"
 #include "adsblive.h"
+#include "aircraftfeed.h"
 #include "radar.h"
 #include "map.h"
 #include "lofimap.h"
@@ -23,11 +24,26 @@ static int           zoomIdx      = ZOOM_DEFAULT;
 static int           selectedAc   = -1;
 static unsigned long lastFetchMs  = 0;
 static unsigned long lastUpdateMs = 0;
-static bool          fetchInProgress = false;
+// millis() of the last *successful* fetch. A failure keeps the previous
+// aircraft set on screen rather than blanking the radar, so this (not
+// lastUpdateMs) is what decides when that set has gone too stale to show.
+static unsigned long lastGoodFetchMs = 0;
+// A zoom step schedules a fetch rather than firing one per intermediate level
+// while the dial is being spun — see ZOOM_FETCH_DEBOUNCE_MS. The fetch itself
+// runs off-thread (aircraftfeed.h), so this is API politeness, not latency.
+static bool          zoomFetchPending = false;
+static unsigned long zoomFetchDueMs   = 0;
 // Timestamp of the last user interaction (zoom/touch/menu). Background map
 // precaching only runs once the user's been idle a moment, so its blocking
 // composes never add latency to active interaction.
 static unsigned long lastInteractionMs = 0;
+
+// Measured loop() iterations per second, reported by the INFO/PERF debug
+// commands. Input responsiveness is bounded by this: touch is only sampled
+// once per iteration, so it's the number to look at whenever the UI feels
+// unresponsive (it collapsed to well under 1 Hz when the network fetch still
+// ran inline on this thread).
+static unsigned long loopHz = 0;
 
 // Emergency alert cooldown — don't re-alert the same aircraft within 60 s
 static char          lastAlertIcao[8] = "";
@@ -48,6 +64,14 @@ static float followCenterLon = 0.0f;
 // refresh rate).
 static unsigned long followLastSeenMs = 0;
 static const unsigned long FOLLOW_GRACE_MS = 90000UL;
+// The followed aircraft's last confirmed state, kept outside the (possibly
+// empty, on a failed poll) `aircraft` vector — fetchAircraftAdsbLive() clears
+// that vector unconditionally before every attempt, so a single dropped poll
+// would otherwise freeze the fetch box in place (see the continuous re-centre
+// block below) right when it most needs to keep moving with the plane.
+static Aircraft     followLastAc;
+static unsigned long followLastAcMs   = 0;
+static bool          followHaveLastAc = false;
 // Toggled by the SHOW/HIDE OTHERS button while following — hides all but the
 // tracked aircraft for an uncluttered chase.
 static bool  followHideOthers = false;
@@ -65,6 +89,13 @@ static int   followPanPxX = 0, followPanPxY = 0;
 static const float FOLLOW_PAN_MAX_PX = 80.0f;
 // Drag-gesture tracking for the follow touch handler (distinguishes a drag from
 // a tap on the two buttons vs. empty space — see the touch handling below).
+// followTouchDownX/Y is the press-down position, fixed for the whole gesture,
+// and is what button hit-testing uses on release; followTouchLastX/Y tracks
+// the latest position for computing per-frame drag deltas and drifts during
+// an ordinary tap (finger jitter/sensor noise), so hit-testing against it
+// instead — as an earlier version of this code did — could fail a genuine tap
+// on a short button (e.g. HIDE/SHOW OTHERS, 22 px tall) most of the time.
+static int  followTouchDownX = 0, followTouchDownY = 0;
 static int  followTouchLastX = 0, followTouchLastY = 0;
 static bool followTouchOnButton = false, followTouchDragged = false;
 
@@ -109,7 +140,7 @@ static void redraw() {
     radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers,
                     followCenterLat, followCenterLon);
     radar.draw(aircraft, displayCenterLat(), displayCenterLon(), displayRadiusKm(), zoomIdx,
-               selectedAc, lastUpdateMs, fetchInProgress);
+               selectedAc, lastUpdateMs, feed::busy());
 }
 
 static void startFollow(int idx) {
@@ -122,18 +153,22 @@ static void startFollow(int idx) {
     followIcao[sizeof(followIcao) - 1] = '\0';
     followCenterLat = aircraft[idx].lat;
     followCenterLon = aircraft[idx].lon;
+    followLastAc     = aircraft[idx];
+    followLastAcMs   = millis();
+    followHaveLastAc = true;
     lastFetchMs = 0;   // fetch soon, re-centred on the target, to load its area
 }
 
 static void stopFollow() {
     following = false;
+    followHaveLastAc = false;
     followIcao[0] = '\0';
     resetFollowPan();
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-static void doFetch();   // forward declaration (defined below)
+static void startFetch();   // forward declaration (defined below)
 
 // Streams the composited radar frame over serial (RGB565, row order) framed by
 // SHOT_BEGIN/SHOT_END markers, so a host script can rebuild a PNG. The whole
@@ -168,10 +203,43 @@ static void checkSerialCommands() {
     if (line == "SPLASH")    { radar.drawBoot(); return; }
     if (line == "INFO") {
         Serial.printf("INFO ac=%d zoom=%d map=%d sel=%d follow=%d hide=%d heap=%u "
-                      "home=%.4f,%.4f view=%.4f,%.4f pan=%d,%d\n",
+                      "home=%.4f,%.4f view=%.4f,%.4f pan=%d,%d "
+                      "busy=%d loophz=%lu feedstack=%u maxalloc=%u\n",
                       (int)aircraft.size(), zoomIdx, mapMode(), selectedAc,
                       following ? 1 : 0, followHideOthers ? 1 : 0, ESP.getFreeHeap(),
-                      homeLat(), homeLon(), viewLat(), viewLon(), followPanPxX, followPanPxY);
+                      homeLat(), homeLon(), viewLat(), viewLon(), followPanPxX, followPanPxY,
+                      feed::busy() ? 1 : 0, loopHz, feed::stackHeadroom(),
+                      ESP.getMaxAllocHeap());
+        return;
+    }
+    // Times a full radar composite+push, so the animation cadence is set from
+    // a measured frame cost rather than a guess.
+    if (line == "PERF") {
+        unsigned long t0 = micros();
+        redraw();
+        unsigned long dt = micros() - t0;
+        Serial.printf("PERF redraw=%luus loophz=%lu heap=%u\n", dt, loopHz, ESP.getFreeHeap());
+        return;
+    }
+    // Streams raw encoder counts for ~6 s. Turning the dial one physical click
+    // while this runs shows exactly how many raw ticks a detent produces on
+    // this unit, which is what EncoderDebouncer's hysteresis threshold has to
+    // match (ENC_TICKS_PER_DETENT).
+    if (line == "ENC") {
+        long start = M5Dial.Encoder.read(), last = start;
+        unsigned long until = millis() + 6000;
+        Serial.printf("ENC start raw=%ld\n", start);
+        while (millis() < until) {
+            M5Dial.update();
+            long raw = M5Dial.Encoder.read();
+            if (raw != last) {
+                Serial.printf("ENC raw=%ld delta=%ld t=%lu\n", raw, raw - last, millis());
+                last = raw;
+            }
+            watchdogFeed();
+            delay(2);
+        }
+        Serial.printf("ENC end raw=%ld net=%ld\n", last, last - start);
         return;
     }
     if (line.startsWith("MAP:"))   { setMapMode(line.substring(4).toInt()); redraw(); return; }
@@ -199,7 +267,7 @@ static void checkSerialCommands() {
     if (line == "UNFOLLOW")  { stopFollow(); redraw(); return; }
     if (line == "HIDE")      { followHideOthers = !followHideOthers; redraw(); return; }
     if (line.startsWith("STATUS:")) { radar.setStatusVisible(line.substring(7).toInt() != 0); redraw(); return; }
-    if (line == "REFETCH")   { doFetch(); return; }
+    if (line == "REFETCH")   { startFetch(); return; }
     if (line == "LIST") {
         for (int i = 0; i < (int)aircraft.size(); ++i)
             Serial.printf("LIST %d %s %.4f,%.4f\n", i, aircraft[i].callsign,
@@ -208,7 +276,7 @@ static void checkSerialCommands() {
     }
     if (line == "MENU") {
         renderSettingsPreview(radar, aircraft, homeLat(), homeLon(),
-                              ZOOM_STEPS[zoomIdx], zoomIdx, lastUpdateMs, fetchInProgress);
+                              ZOOM_STEPS[zoomIdx], zoomIdx, lastUpdateMs, feed::busy());
         return;
     }
     if (line == "SETLOC")    { renderSetLocationPreview(radar); return; }
@@ -238,33 +306,38 @@ static void checkEmergency() {
     }
 }
 
-static void doFetch() {
-    float r = displayRadiusKm();
+// Hands a fetch to the background task (aircraftfeed.h) and returns straight
+// away. No-op if one is already in flight. The poll icon picks up the "in
+// flight" look from feed::busy() on the next scheduled redraw, so there's no
+// need to force an extra full-frame composite here.
+static void startFetch() {
+    feed::request(viewLat(), viewLon(), displayRadiusKm());
+}
 
-    // Remember the selected aircraft by icao24: fetchAircraft() rebuilds the
-    // vector (usually reordered, possibly shorter), so the bare index is stale
-    // afterwards — without this the selection jumps to a different plane or the
-    // detail panel vanishes on every poll.
+// Drains a completed fetch, if there is one, and does the bookkeeping that has
+// to happen on the UI thread (trail history, selection re-resolution, follow
+// tracking, emergency alerting). Cheap and non-blocking when nothing is ready.
+static void collectFetch() {
+    // Capture the selection by icao24 *before* the vector is replaced: the
+    // fresh set is usually reordered and possibly shorter, so the bare index is
+    // meaningless afterwards — without this the selection jumps to a different
+    // plane or the detail panel vanishes on every poll.
     char selIcao[8] = "";
     if (selectedAc >= 0 && selectedAc < (int)aircraft.size())
         strncpy(selIcao, aircraft[selectedAc].icao24, sizeof(selIcao) - 1);
 
-    // Flip the poll icon into its "request in flight" look immediately,
-    // before the (possibly slow) network call blocks everything else.
-    fetchInProgress = true;
-    redraw();
+    bool ok = false;
+    if (!feed::takeResult(aircraft, ok)) return;   // nothing finished yet
 
-    // Fetch is centred on the view centre — home normally, the tracked aircraft
-    // while following.
-    bool ok = fetchAircraftAdsbLive(viewLat(), viewLon(), r, aircraft);
-    // Append this poll's reported positions to the breadcrumb trails (only on a
-    // real success — a failed fetch clears `aircraft`, and we don't want an empty
-    // frame wiping the history that interpolation and the selected-trail draw on).
-    if (ok) radar.recordHistory(aircraft, following ? followIcao : selIcao);
     lastUpdateMs = millis();
-    fetchInProgress = false;
 
-    // Re-locate the selection by icao24 in the fresh set (follow target takes
+    if (ok) {
+        lastGoodFetchMs = lastUpdateMs;
+        // Append this poll's reported positions to the breadcrumb trails.
+        radar.recordHistory(aircraft, following ? followIcao : selIcao);
+    }
+
+    // Re-locate the selection by icao24 in the current set (follow target takes
     // precedence). While following, keep going through ADS-B coverage gaps and
     // only give up after FOLLOW_GRACE_MS with no sighting at all.
     if (following) {
@@ -272,8 +345,15 @@ static void doFetch() {
         if (idx >= 0) {
             selectedAc       = idx;
             followLastSeenMs = millis();
-        } else {
-            selectedAc = -1;       // not seen this poll; view stays put
+            followLastAc     = aircraft[idx];
+            followLastAcMs   = millis();
+            followHaveLastAc = true;
+        } else if (ok) {
+            // Only a *successful* poll that didn't contain the target counts as
+            // a miss — a failed one says nothing about where the plane is, and
+            // letting it start the grace clock was dropping follows during
+            // ordinary network blips.
+            selectedAc = -1;
             if (millis() - followLastSeenMs > FOLLOW_GRACE_MS) stopFollow();
         }
     } else if (selIcao[0]) {
@@ -336,7 +416,7 @@ static void maybePrecacheMaps() {
     // repaint the current level (now a fast cache hit) to keep the screen right.
     if (mapLayer.precache(homeLat(), homeLon(), ZOOM_STEPS[best])) {
         radar.draw(aircraft, homeLat(), homeLon(), ZOOM_STEPS[zoomIdx], zoomIdx,
-                   selectedAc, lastUpdateMs, fetchInProgress);
+                   selectedAc, lastUpdateMs, feed::busy());
     }
 }
 
@@ -370,14 +450,36 @@ void setup() {
     // precache round finish, free the decoder, and settle at a healthy heap.
     mapLayer.pruneExcept(homeLat(), homeLon());
 
-    doFetch();
+    // Allocate the aircraft buffer once, up front. This heap has to keep a
+    // contiguous ~40 KB block free for each TLS handshake, and a vector that
+    // grows/reallocates later is exactly what splits the large free region
+    // (the historical cause of "SSL - Memory allocation failed" stalling the
+    // feed after a busy response). The feed's own buffers are reserved to match.
+    aircraft.reserve(MAX_AIRCRAFT);
+
+    feed::begin();       // background fetch task — the UI never blocks on network
+    startFetch();        // first poll; the loop picks up the result when it lands
 
     lastFetchMs = millis();
-    zoomEncoder.begin(ENC_STABLE_MS_ZOOM);
+    zoomEncoder.begin();
 }
 
 void loop() {
     watchdogFeed();      // heartbeat — a stalled loop for 60s triggers auto-reset
+
+    // Loop-rate counter — see loopHz. Cheap, and the single most useful number
+    // for telling "the UI is busy" apart from "the UI is blocked".
+    {
+        static unsigned long tickCount = 0, tickWindowMs = 0;
+        tickCount++;
+        unsigned long t = millis();
+        if (t - tickWindowMs >= 1000UL) {
+            loopHz       = tickCount;
+            tickCount    = 0;
+            tickWindowMs = t;
+        }
+    }
+
     M5Dial.update();
     checkResetCombo();
     checkSerialCommands();
@@ -389,7 +491,7 @@ void loop() {
 
     if (settingsRequested()) {
         float r = displayRadiusKm();
-        runSettings(radar, aircraft, viewLat(), viewLon(), r, zoomIdx, lastUpdateMs, fetchInProgress);
+        runSettings(radar, aircraft, viewLat(), viewLon(), r, zoomIdx, lastUpdateMs, feed::busy());
         // The map cache is content-addressed by (lat,lon,radius), so a changed
         // home location just means the next radar.draw()/ensure() loads or
         // composes a different cache entry — no need to wipe anything here.
@@ -423,7 +525,17 @@ void loop() {
         }
 
         zoomIdx = constrain(zoomIdx + zoomDelta, 0, ZOOM_COUNT - 1);
-        if (!following) { selectedAc = -1; doFetch(); lastFetchMs = millis(); return; }
+        if (!following) {
+            selectedAc = -1;
+            // Redraw immediately (rings/zoom-dots/map at the new radius, using
+            // the last-fetched aircraft) so the step feels instant; the actual
+            // network fetch is debounced below so spinning through several
+            // levels quickly doesn't block on one for each intermediate step.
+            zoomFetchPending = true;
+            zoomFetchDueMs   = millis() + ZOOM_FETCH_DEBOUNCE_MS;
+            redraw();
+            return;
+        }
         // Following: manual zoom, same as the normal view.
         redraw();
         return;
@@ -440,6 +552,7 @@ void loop() {
         // handling, which can't distinguish a drag from a tap.
         if (touch.wasPressed()) {
             lastInteractionMs = millis();
+            followTouchDownX = touch.x; followTouchDownY = touch.y;
             followTouchLastX = touch.x; followTouchLastY = touch.y;
             followTouchOnButton = radar.hitUnfollowButton(touch.x, touch.y) ||
                                   radar.hitOthersButton(touch.x, touch.y);
@@ -458,14 +571,29 @@ void loop() {
                 }
                 followTouchDragged = true;
                 lastInteractionMs = millis();
-                redraw();
+                // Rate-limit the repaint. The pan offset above is applied every
+                // sample so the drag stays accurate, but a full composite costs
+                // ~70 ms — repainting on every touch report would spend the
+                // whole drag inside draw() and leave few gaps to sample the
+                // release in, which is how a drag can end up "eating" the tap
+                // that follows it.
+                static unsigned long lastDragDrawMs = 0;
+                unsigned long tnow = millis();
+                if (tnow - lastDragDrawMs >= 80UL) {
+                    lastDragDrawMs = tnow;
+                    redraw();
+                }
             }
             followTouchLastX = touch.x; followTouchLastY = touch.y;
         } else if (touch.wasReleased() && !followTouchDragged) {
-            if (radar.hitUnfollowButton(followTouchLastX, followTouchLastY)) {
+            // Hit-test against where the finger went DOWN, not its last-tracked
+            // position — the latter drifts a few px during an ordinary tap
+            // (finger jitter/sensor noise) and would otherwise miss a real tap
+            // on a short button most of the time (see followTouchDownX/Y above).
+            if (radar.hitUnfollowButton(followTouchDownX, followTouchDownY)) {
                 selectedAc = radar.findByIcao(aircraft, followIcao);
                 stopFollow();
-            } else if (radar.hitOthersButton(followTouchLastX, followTouchLastY)) {
+            } else if (radar.hitOthersButton(followTouchDownX, followTouchDownY)) {
                 followHideOthers = !followHideOthers;   // toggle other traffic
             } else if (!followTouchOnButton) {
                 resetFollowPan();   // plain tap on empty space recentres
@@ -483,6 +611,18 @@ void loop() {
                    radar.hitFollowButton(touch.x, touch.y)) {
             // FOLLOW button in the detail panel starts tracking (and hides the panel).
             startFollow(selectedAc);
+            // This same physical touch is still down and will report isPressed()/
+            // wasReleased() on later loop iterations, now routed to the follow
+            // touch handler above — which never saw its wasPressed() edge, so
+            // its drag-gesture state (last X/Y, on-button, dragged) would
+            // otherwise be stale leftovers from whatever was touched last.
+            // Priming it here as "already on a button, not dragging" makes that
+            // leftover release a no-op instead of a bogus jump or a phantom hit
+            // on UNFOLLOW/HIDE OTHERS.
+            followTouchDownX = touch.x; followTouchDownY = touch.y;
+            followTouchLastX = touch.x; followTouchLastY = touch.y;
+            followTouchOnButton = true;
+            followTouchDragged  = false;
         } else {
             radar.setStatusVisible(false);   // any other tap dismisses the panel
             int hit = radar.hitTest(touch.x, touch.y, aircraft, viewLat(), viewLon(), r);
@@ -492,12 +632,35 @@ void loop() {
         redraw();
     }
 
-    // ── Auto-refresh ──────────────────────────────────────────────────────────
+    // ── Feed: collect finished fetches, schedule new ones ─────────────────────
+    // Both are non-blocking; the request itself runs on the background task
+    // (aircraftfeed.h) so a slow or dead network can no longer stall input.
+    collectFetch();
+
     unsigned long now = millis();
-    if (now - lastFetchMs >= refreshIntervalMs()) {
+    if (zoomFetchPending && now >= zoomFetchDueMs) {
+        // The user has settled on a zoom level — poll once for it now, and
+        // restart the periodic timer from here so this doesn't immediately
+        // double up with the check below on the same tick.
+        zoomFetchPending = false;
         lastFetchMs = now;
         if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
-        doFetch();
+        startFetch();
+    } else if (now - lastFetchMs >= refreshIntervalMs()) {
+        lastFetchMs = now;
+        if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+        startFetch();
+    }
+
+    // A failed fetch deliberately leaves the previous aircraft on screen so a
+    // transient blip doesn't blank the radar. Past the dead-reckoning cap they
+    // are frozen and drifting ever further from reality, so drop them and show
+    // an honestly empty scope instead.
+    if (!aircraft.empty() && lastGoodFetchMs != 0 &&
+        now - lastGoodFetchMs > FEED_STALE_CLEAR_MS) {
+        aircraft.clear();
+        selectedAc = -1;
+        redraw();
     }
 
     // ── Follow: keep the tracked aircraft glued to the centre ───────────────────
@@ -507,8 +670,19 @@ void loop() {
     // cadence below; the lo-fi background used while following recentres for free.
     if (following) {
         int idx = radar.findByIcao(aircraft, followIcao);
-        if (idx >= 0)
+        if (idx >= 0) {
             radar.interpPos(aircraft[idx], followCenterLat, followCenterLon);
+        } else if (followHaveLastAc) {
+            // Not in this poll's data — most often because the last fetch
+            // attempt failed and cleared the whole aircraft list, not because
+            // the plane is actually gone. Keep dead-reckoning from its last
+            // confirmed state so the fetch box keeps moving with it instead of
+            // freezing (and likely missing it again) until the next success.
+            float dtS = (float)(millis() - followLastAcMs) / 1000.0f;
+            radar.projectForward(followLastAc.lat, followLastAc.lon, followLastAc.heading,
+                                 followLastAc.speedMs, followLastAc.onGround, dtS,
+                                 followCenterLat, followCenterLon);
+        }
     }
 
     // ── Periodic redraw (1 Hz — keeps the poll icon's countdown ticking) ─────
@@ -530,7 +704,7 @@ void loop() {
         lastDrawMs = now;
 
         bool anyMoving = following;
-        if (!anyMoving && !fetchInProgress && !radar.statusVisible()) {
+        if (!anyMoving && !feed::busy() && !radar.statusVisible()) {
             for (const Aircraft& ac : aircraft)
                 if (!ac.onGround && ac.speedMs >= INTERP_MIN_SPEED_MS) { anyMoving = true; break; }
         }
@@ -538,7 +712,7 @@ void loop() {
         if (anyMoving) {
             redraw();
         } else {
-            radar.updatePollIcon(lastUpdateMs, fetchInProgress);
+            radar.updatePollIcon(lastUpdateMs, feed::busy());
             radar.updateStatusOverlay();
         }
     }
@@ -549,7 +723,7 @@ void loop() {
     // A compose blocks a few seconds, so gating on idle keeps it off the
     // interactive path; the level nearest the current zoom is done first.
     // (Skipped when the map underlay is disabled — there's nothing to precache.)
-    if (!fetchInProgress && !following && mapMode() == MAP_FULL &&
+    if (!feed::busy() && !following && mapMode() == MAP_FULL &&
         now - lastInteractionMs >= 1500UL) {
         maybePrecacheMaps();
     } else if (mapMode() != MAP_FULL) {

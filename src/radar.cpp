@@ -122,6 +122,16 @@ void RadarDisplay::worldToScreen(float lat, float lon,
     sy = CY - (int)((dy / radiusKm) * PLOT_R);          // screen Y is inverted
 }
 
+// Shared dead-reckoning math: advance (lat0,lon0) along headingDeg at speedMs
+// for dt seconds (already elapsed, already capped by the caller).
+static void projectLatLon(float lat0, float lon0, float headingDeg, float speedMs,
+                          float dt, float& lat, float& lon) {
+    float distKm = speedMs * dt / 1000.0f;
+    float hdg    = headingDeg * (float)M_PI / 180.0f;     // heading 0 = north, 90 = east
+    lat = lat0 + (distKm * cosf(hdg)) / KM_PER_DEG;
+    lon = lon0 + (distKm * sinf(hdg)) / (KM_PER_DEG * cosf(lat0 * (float)M_PI / 180.0f));
+}
+
 void RadarDisplay::effectivePos(const Aircraft& ac, float& lat, float& lon) const {
     lat = ac.lat;
     lon = ac.lon;
@@ -136,10 +146,23 @@ void RadarDisplay::effectivePos(const Aircraft& ac, float& lat, float& lon) cons
     if (dt < 0.0f) dt = 0.0f;
     if (dt > INTERP_MAX_S) dt = INTERP_MAX_S;             // don't fling stale marks
 
-    float distKm = ac.speedMs * dt / 1000.0f;
-    float hdg    = ac.heading * (float)M_PI / 180.0f;     // heading 0 = north, 90 = east
-    lat += (distKm * cosf(hdg)) / KM_PER_DEG;
-    lon += (distKm * sinf(hdg)) / (KM_PER_DEG * cosf(ac.lat * (float)M_PI / 180.0f));
+    projectLatLon(ac.lat, ac.lon, ac.heading, ac.speedMs, dt, lat, lon);
+}
+
+// Same dead reckoning as effectivePos(), but for a snapshot that isn't (or may
+// not be) in the current poll's aircraft list — follow mode's fallback for
+// keeping the fetch box moving with the plane through a failed/empty poll,
+// where the normal per-frame path has nothing to look up. dtS is the caller's
+// own elapsed-since-last-known-position clock, not tied to the latest fetch
+// attempt (which may not be about this aircraft at all).
+void RadarDisplay::projectForward(float lat0, float lon0, float headingDeg, float speedMs,
+                                  bool onGround, float dtS, float& lat, float& lon) const {
+    lat = lat0;
+    lon = lon0;
+    if (onGround || speedMs < INTERP_MIN_SPEED_MS) return;
+    if (dtS < 0.0f) dtS = 0.0f;
+    if (dtS > INTERP_MAX_S) dtS = INTERP_MAX_S;
+    projectLatLon(lat0, lon0, headingDeg, speedMs, dtS, lat, lon);
 }
 
 void RadarDisplay::acToScreen(const Aircraft& ac,
@@ -288,11 +311,13 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         // dragged away from it (see main.cpp's follow-pan).
         int tx, ty;
         worldToScreen(_followTargetLat, _followTargetLon, cLat, cLon, radiusKm, tx, ty);
-        _g->drawCircle(tx, ty, 9, COL_SEL);
-        _g->drawLine(tx - 12, ty, tx - 5, ty, COL_SEL);
-        _g->drawLine(tx + 5, ty, tx + 12, ty, COL_SEL);
-        _g->drawLine(tx, ty - 12, tx, ty - 5, COL_SEL);
-        _g->drawLine(tx, ty + 5, tx, ty + 12, COL_SEL);
+        drawReticleGlyph(tx, ty, COL_SEL);
+
+        // The view is centred exactly on the target (tx,ty == CX,CY) unless
+        // main.cpp's follow-pan has shifted it — in which case show a tappable
+        // recentre icon (drawn later, over the aircraft) so it's not lost
+        // underneath them.
+        _showRecenter = (tx != CX || ty != CY);
     } else {
         // Home crosshair at centre
         _g->drawLine(CX - 6, CY, CX + 6, CY, COL_HOME);
@@ -334,6 +359,7 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     } else if (_following) {
         drawUnfollowBar();               // chase view controls
         drawOthersButton();
+        if (_showRecenter) drawRecenterIcon();
     } else if (selectedIdx >= 0 && selectedIdx < (int)aircraft.size()) {
         drawDetail(aircraft[selectedIdx]);
         drawFollowButton();              // FOLLOW control above the detail pill
@@ -677,36 +703,40 @@ void RadarDisplay::drawAircraft(const Aircraft& ac, int sx, int sy, bool selecte
                  : selected   ? COL_SEL
                  : ac.onGround ? COL_GND : COL_AC;
 
-    int radius = selected ? 5 : 4;   // bumped up a notch — small dots were hard to spot
-    if (emergency) radius += 1;
+    if (aircraftIconStyle() == 1) {
+        drawAircraftPlaneIcon(ac, sx, sy, selected, emergency, col);
+    } else {
+        int radius = selected ? 5 : 4;   // bumped up a notch — small dots were hard to spot
+        if (emergency) radius += 1;
 
-    // Heading arrow — starts just outside the body dot's edge instead of at
-    // its exact centre (the dot is filled *after* this, on top, so a line
-    // starting at the centre had its first few px hidden underneath it) and
-    // is long enough to actually read as a direction indicator. A dark halo
-    // drawn first (wider) gives it contrast against the map underlay,
-    // mirroring the emulator's HALO treatment — a bare 1px line in aircraft
-    // colour all but disappears over light-coloured map tiles.
-    if (showTrails() && !ac.onGround && ac.speedMs > 5.0f) {
-        float rad  = ac.heading * (float)M_PI / 180.0f;
-        float sinR = sinf(rad), cosR = cosf(rad);
-        const int   gap = radius + 1;
-        const float len = 13.0f;
-        float sx0 = sx + sinR * gap,       sy0 = sy - cosR * gap;
-        float ex  = sx + sinR * (gap + len), ey = sy - cosR * (gap + len);
-        _g->drawWideLine(sx0, sy0, ex, ey, 2.6f, COL_HALO);
-        _g->drawWideLine(sx0, sy0, ex, ey, 1.2f, col);
-    }
+        // Heading arrow — starts just outside the body dot's edge instead of at
+        // its exact centre (the dot is filled *after* this, on top, so a line
+        // starting at the centre had its first few px hidden underneath it) and
+        // is long enough to actually read as a direction indicator. A dark halo
+        // drawn first (wider) gives it contrast against the map underlay,
+        // mirroring the emulator's HALO treatment — a bare 1px line in aircraft
+        // colour all but disappears over light-coloured map tiles.
+        if (showTrails() && !ac.onGround && ac.speedMs > 5.0f) {
+            float rad  = ac.heading * (float)M_PI / 180.0f;
+            float sinR = sinf(rad), cosR = cosf(rad);
+            const int   gap = radius + 1;
+            const float len = 13.0f;
+            float sx0 = sx + sinR * gap,       sy0 = sy - cosR * gap;
+            float ex  = sx + sinR * (gap + len), ey = sy - cosR * (gap + len);
+            _g->drawWideLine(sx0, sy0, ex, ey, 2.6f, COL_HALO);
+            _g->drawWideLine(sx0, sy0, ex, ey, 1.2f, col);
+        }
 
-    // Body dot — dark halo ring behind it for the same map-contrast reason,
-    // then an extra red ring further out still for emergencies so they read
-    // as "highlighted" at a glance rather than just "a red dot instead of
-    // white".
-    _g->fillCircle(sx, sy, radius + 2, COL_HALO);
-    if (emergency) {
-        _g->drawCircle(sx, sy, radius + 4, COL_HOME);
+        // Body dot — dark halo ring behind it for the same map-contrast reason,
+        // then an extra red ring further out still for emergencies so they read
+        // as "highlighted" at a glance rather than just "a red dot instead of
+        // white".
+        _g->fillCircle(sx, sy, radius + 2, COL_HALO);
+        if (emergency) {
+            _g->drawCircle(sx, sy, radius + 4, COL_HOME);
+        }
+        _g->fillCircle(sx, sy, radius, col);
     }
-    _g->fillCircle(sx, sy, radius, col);
 
     // Callsign label: Off (never) / Selected (only this one) / All
     int labels = flightLabels();
@@ -716,6 +746,33 @@ void RadarDisplay::drawAircraft(const Aircraft& ac, int sx, int sy, bool selecte
         _g->setTextColor(emergency ? COL_HOME : (selected ? COL_SEL : COL_STATUS), COL_BG);
         _g->drawString(ac.callsign, sx, sy - 16);
     }
+}
+
+// A single dart-shaped triangle pointing along ac.heading — nose forward,
+// two back corners swept out to a point behind. Stands in for both the dot
+// and its separate heading arrow at once, so there's no redundant line to
+// also draw here.
+void RadarDisplay::drawAircraftPlaneIcon(const Aircraft& ac, int sx, int sy,
+                                         bool selected, bool emergency, uint16_t col) {
+    int nose = selected ? 9 : 7;
+    int back = selected ? 4 : 3;
+    int wing = selected ? 5 : 4;
+    if (emergency) { nose += 1; wing += 1; }
+
+    // Dark halo behind it for map contrast, same reasoning as the dot mark;
+    // sized to cover the triangle's footprint rather than just the centre.
+    _g->fillCircle(sx, sy, nose + 2, COL_HALO);
+    if (emergency) _g->drawCircle(sx, sy, nose + 4, COL_HOME);
+
+    float rad = ac.heading * (float)M_PI / 180.0f;
+    float s = sinf(rad), c = cosf(rad);   // heading direction (0=up, matches worldToScreen)
+    float px = c, py = s;                 // unit vector perpendicular to heading
+
+    int nx = sx + (int)(s * nose), ny = sy - (int)(c * nose);
+    int bx = sx - (int)(s * back), by = sy + (int)(c * back);
+    int lx = bx - (int)(px * wing), ly = by - (int)(py * wing);
+    int rx = bx + (int)(px * wing), ry = by + (int)(py * wing);
+    _g->fillTriangle(nx, ny, lx, ly, rx, ry, col);
 }
 
 void RadarDisplay::drawFollowInfo(const Aircraft& ac, int sx, int sy) {
@@ -814,6 +871,21 @@ void RadarDisplay::drawOthersButton() {
                    OBTN_X + OBTN_W / 2, OBTN_Y + OBTN_H / 2);
 }
 
+void RadarDisplay::drawReticleGlyph(int x, int y, uint16_t col) {
+    _g->drawCircle(x, y, 9, col);
+    _g->drawLine(x - 12, y, x - 5, y, col);
+    _g->drawLine(x + 5, y, x + 12, y, col);
+    _g->drawLine(x, y - 12, x, y - 5, col);
+    _g->drawLine(x, y + 5, x, y + 12, col);
+}
+
+void RadarDisplay::drawRecenterIcon() {
+    // Dark halo behind it for contrast against the map, same reasoning as the
+    // aircraft marks — an unfilled reticle alone can vanish over light tiles.
+    _g->fillCircle(RCTR_X, RCTR_Y, 13, COL_HALO);
+    drawReticleGlyph(RCTR_X, RCTR_Y, COL_SEL);
+}
+
 void RadarDisplay::flashEmergencyRing() {
     // 3 px thick ring just inside the round screen bezel (radius 115–117)
     auto& d = M5Dial.Display;
@@ -871,14 +943,20 @@ bool RadarDisplay::hitFollowButton(int tx, int ty) const {
            ty >= FBTN_Y && ty <= FBTN_Y + FBTN_H;
 }
 
+// A few px of slop beyond the drawn edge on both — short buttons close to the
+// round bezel (OTHERS is only 22 px tall) are otherwise an easy miss for a
+// normal-sized fingertip, on top of the down-position/last-position mismatch
+// fixed in main.cpp's follow touch handler.
+static constexpr int BTN_SLOP = 6;
+
 bool RadarDisplay::hitUnfollowButton(int tx, int ty) const {
-    return tx >= UFBTN_X && tx <= UFBTN_X + UFBTN_W &&
-           ty >= UFBTN_Y && ty <= UFBTN_Y + UFBTN_H;
+    return tx >= UFBTN_X - BTN_SLOP && tx <= UFBTN_X + UFBTN_W + BTN_SLOP &&
+           ty >= UFBTN_Y - BTN_SLOP && ty <= UFBTN_Y + UFBTN_H + BTN_SLOP;
 }
 
 bool RadarDisplay::hitOthersButton(int tx, int ty) const {
-    return tx >= OBTN_X && tx <= OBTN_X + OBTN_W &&
-           ty >= OBTN_Y && ty <= OBTN_Y + OBTN_H;
+    return tx >= OBTN_X - BTN_SLOP && tx <= OBTN_X + OBTN_W + BTN_SLOP &&
+           ty >= OBTN_Y - BTN_SLOP && ty <= OBTN_Y + OBTN_H + BTN_SLOP;
 }
 
 void RadarDisplay::drawApiStatusOverlay() {

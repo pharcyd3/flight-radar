@@ -62,6 +62,13 @@ public:
         effectivePos(ac, lat, lon);
     }
 
+    // Dead-reckons an explicit last-known position/heading/speed forward by
+    // dtS seconds — follow mode's fallback to keep the fetch box moving with
+    // the plane across a failed/empty poll, using its own elapsed-time clock
+    // rather than one tied to the (possibly unrelated) latest fetch attempt.
+    void projectForward(float lat0, float lon0, float headingDeg, float speedMs,
+                        bool onGround, float dtS, float& lat, float& lon) const;
+
     // True if (lat,lon) projects beyond frac × the plot radius from the centre —
     // follow mode's trigger for re-centring on a target that's drifted too far.
     bool offCenter(float lat, float lon,
@@ -145,6 +152,10 @@ private:
     void drawRings(float radiusKm);
     void drawZoomDots(int zoomIdx);
     void drawAircraft(const Aircraft& ac, int sx, int sy, bool selected);
+    // "Plane" icon style: a single heading-oriented triangle instead of a dot
+    // + separate arrow. Shares drawAircraft()'s colour/size/emergency logic.
+    void drawAircraftPlaneIcon(const Aircraft& ac, int sx, int sy,
+                               bool selected, bool emergency, uint16_t col);
     // Altitude + speed printed just below the tracked aircraft's mark while
     // following — the detail pill is replaced by the unfollow bar in this
     // mode, so this is the only on-screen readout of those two numbers.
@@ -154,6 +165,15 @@ private:
     void drawFollowButton();
     void drawUnfollowBar();
     void drawOthersButton();
+    // Circle + 4 corner ticks — the reticle mark, drawn both on the tracked
+    // aircraft's true position and (reused, same look) as the recentre icon.
+    void drawReticleGlyph(int x, int y, uint16_t col);
+    // Tappable recentre icon shown at a fixed spot while following with the
+    // view dragged away from the tracked aircraft (see main.cpp's follow-pan).
+    // No dedicated hit-test needed: it sits over otherwise-empty map, and a
+    // plain tap anywhere off the UNFOLLOW/HIDE-OTHERS buttons already resets
+    // the pan — this only makes that affordance visible.
+    void drawRecenterIcon();
     void drawPollIcon(unsigned long lastUpdateMs, bool fetching);
     void drawApiStatusOverlay();
 
@@ -176,6 +196,7 @@ private:
     char  _followLabel[12]  = "";
     float _followTargetLat  = 0.0f;   // tracked aircraft's true position, for the
     float _followTargetLon  = 0.0f;   // reticle when the view is panned away from it
+    bool  _showRecenter     = false;  // true when the follow-pan view center is off-target
 
     bool _showStatus = false;
 
@@ -213,4 +234,9 @@ private:
     static constexpr int OBTN_Y = 40;
     static constexpr int OBTN_W = 130;
     static constexpr int OBTN_H = 22;
+
+    // Recentre icon — fixed spot on the right edge, clear of the OTHERS toggle
+    // (above) and the UNFOLLOW bar (below) at every zoom level.
+    static constexpr int RCTR_X = 206;
+    static constexpr int RCTR_Y = 120;
 };

@@ -7,6 +7,7 @@
 #include "config.h"
 
 #include <M5Dial.h>
+#include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -72,6 +73,17 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
                            std::vector<Aircraft>& out) {
     out.clear();
 
+    // Fail fast if WiFi isn't actually associated yet — e.g. mid-reconnect
+    // after a drop. Without this, HTTPClient/WiFiClientSecure still attempt
+    // the connection and can block for the full timeout (up to ~9 s, twice
+    // with the retry below) before giving up, freezing the whole UI for that
+    // whole stretch since every touch/encoder input is handled synchronously
+    // in the same loop() this call blocks. A dead radio fails in microseconds.
+    if (WiFi.status() != WL_CONNECTED) {
+        setApiStatus(ApiState::NetError, -1, 0, "WiFi not connected");
+        return false;
+    }
+
     // Radius param is nautical miles, capped at the API's 250 nm maximum.
     int radiusNm = (int)lroundf(radiusKm / KM_PER_NM);
     if (radiusNm < 1)   radiusNm = 1;
@@ -94,14 +106,33 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
         HTTPClient       http;
         WiFiClientSecure client;
         client.setInsecure();      // no cert verification for v1
-        client.setTimeout(10);
+        // Three DIFFERENT timeouts, easily confused — all three matter:
+        //  - setTimeout() is Stream::setTimeout (NetworkClient does NOT override
+        //    it), i.e. how long a single readBytes()/readStringUntil() waits for
+        //    the next chunk of BODY, in milliseconds. This read 10 here, which
+        //    is 10 ms, not the 10 s clearly intended: any link that paused even
+        //    briefly mid-body had the read abandoned, truncating the response.
+        //  - setConnectionTimeout() bounds establishing the TCP connection.
+        //  - setHandshakeTimeout() bounds the TLS handshake and is in SECONDS.
+        //    It defaults to 120 s, so without it a stalled handshake could hang
+        //    for two minutes.
+        // These are generous rather than tight on purpose: the fetch runs on a
+        // background task now (aircraftfeed.h), so a slow request costs nothing
+        // in UI responsiveness, and clipping a merely-slow connection just to
+        // return early throws away a poll for no benefit.
+        client.setTimeout(5000);             // ms, per-read of the body
+        client.setConnectionTimeout(10000);  // ms, TCP connect
+        client.setHandshakeTimeout(10);      // SECONDS, TLS handshake
 
+        // One retry on a transient failure — a dropped SYN or a reset
+        // connection is common on real WiFi and usually succeeds immediately
+        // on a second attempt.
         for (int attempt = 0; attempt < 2; attempt++) {
             if (attempt > 0) client.stop();
             watchdogFeed();
             http.begin(client, url);
             http.addHeader("User-Agent", PRODUCT_UA);   // community API — identify politely
-            http.setTimeout(9000);
+            http.setTimeout(10000);
             http.collectHeaders(hdrKeys, 1);
             code = http.GET();
             size = http.getSize();
