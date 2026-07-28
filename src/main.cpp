@@ -63,7 +63,11 @@ static float followCenterLon = 0.0f;
 // this long with no sighting at all (time-based so it's independent of the
 // refresh rate).
 static unsigned long followLastSeenMs = 0;
-static const unsigned long FOLLOW_GRACE_MS = 90000UL;
+// 20 minutes. This was 90 s, which is fine over a well-covered land mass but
+// ends a long-haul follow at the first oceanic/remote gap. Paired with
+// FOLLOW_DR_MAX_S, the fetch box keeps coasting along the aircraft's last known
+// heading through the gap, so the follow can survive it and re-acquire.
+static const unsigned long FOLLOW_GRACE_MS = 1200000UL;
 // The followed aircraft's last confirmed state, kept outside the (possibly
 // empty, on a failed poll) `aircraft` vector — fetchAircraftAdsbLive() clears
 // that vector unconditionally before every attempt, so a single dropped poll
@@ -690,7 +694,7 @@ void loop() {
             float dtS = (float)(millis() - followLastAcMs) / 1000.0f;
             radar.projectForward(followLastAc.lat, followLastAc.lon, followLastAc.heading,
                                  followLastAc.speedMs, followLastAc.onGround, dtS,
-                                 followCenterLat, followCenterLon);
+                                 FOLLOW_DR_MAX_S, followCenterLat, followCenterLon);
         }
     }
 

@@ -157,12 +157,13 @@ void RadarDisplay::effectivePos(const Aircraft& ac, float& lat, float& lon) cons
 // own elapsed-since-last-known-position clock, not tied to the latest fetch
 // attempt (which may not be about this aircraft at all).
 void RadarDisplay::projectForward(float lat0, float lon0, float headingDeg, float speedMs,
-                                  bool onGround, float dtS, float& lat, float& lon) const {
+                                  bool onGround, float dtS, float maxS,
+                                  float& lat, float& lon) const {
     lat = lat0;
     lon = lon0;
     if (onGround || speedMs < INTERP_MIN_SPEED_MS) return;
     if (dtS < 0.0f) dtS = 0.0f;
-    if (dtS > INTERP_MAX_S) dtS = INTERP_MAX_S;
+    if (dtS > maxS) dtS = maxS;
     projectLatLon(lat0, lon0, headingDeg, speedMs, dtS, lat, lon);
 }
 

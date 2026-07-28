@@ -105,6 +105,20 @@ static const int MAX_AIRCRAFT = 80;
 static const float INTERP_MIN_SPEED_MS = 5.0f;    // ~10 kts — below this, don't move
 static const float INTERP_MAX_S        = 120.0f;  // cap extrapolation at 2 min
 
+// Follow mode extrapolates for a different purpose, and needs a far longer cap.
+//
+// INTERP_MAX_S above bounds what's *drawn*: a stale mark must not be flung
+// across the screen. But follow mode also uses dead reckoning to steer the
+// fetch box itself, and there the failure mode is the opposite — if the box
+// stops advancing during a data gap, the aircraft reappears hundreds of km
+// beyond it and is never seen again, ending the follow. Long-haul routes cross
+// oceans and remote airspace where community ADS-B coverage routinely drops out
+// for 10-30 minutes, so at 2 min the box gave up almost immediately. A cruising
+// airliner holds heading and speed very predictably, so extrapolating the
+// search centre far longer is safe — worst case the box is a little off and the
+// aircraft is picked up again on a later poll.
+static const float FOLLOW_DR_MAX_S = 1800.0f;     // 30 min of fetch-box coasting
+
 // ── Position trails ─────────────────────────────────────────────────────────────
 // Breadcrumb history for the *selected* aircraft: the last few reported positions,
 // drawn as a fading polyline. Only the selected aircraft's trail is ever drawn,

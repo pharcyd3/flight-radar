@@ -71,8 +71,12 @@ public:
     // dtS seconds — follow mode's fallback to keep the fetch box moving with
     // the plane across a failed/empty poll, using its own elapsed-time clock
     // rather than one tied to the (possibly unrelated) latest fetch attempt.
+    // maxS caps how far ahead it will extrapolate; follow mode passes
+    // FOLLOW_DR_MAX_S (far longer than the display's INTERP_MAX_S) because a
+    // fetch box that stops coasting during a coverage gap loses the aircraft.
     void projectForward(float lat0, float lon0, float headingDeg, float speedMs,
-                        bool onGround, float dtS, float& lat, float& lon) const;
+                        bool onGround, float dtS, float maxS,
+                        float& lat, float& lon) const;
 
     // True if (lat,lon) projects beyond frac × the plot radius from the centre —
     // follow mode's trigger for re-centring on a target that's drifted too far.
