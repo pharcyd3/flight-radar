@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include "map.h"
 #include "config.h"
+#include "watchdog.h"
 
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -162,6 +163,7 @@ bool MapLayer::compose(float lat, float lon, float r) {
             bool fetched = false;
             for (int attempt = 0; attempt < 3 && !fetched; attempt++) {
                 if (attempt > 0) { client.stop(); delay(250); }
+                watchdogFeed();   // each tile can take up to ~9s — keep the WDT happy
                 fetched = fetchTileToFile(client, http, z, wtx, wty, TILE_TMP_PATH);
             }
             if (!fetched) { fail++; continue; }
@@ -408,10 +410,35 @@ bool MapLayer::precache(float lat, float lon, float r) {
     return true;
 }
 
+void MapLayer::pruneExcept(float lat, float lon) {
+    if (!_ready) return;
+    char keep[40];
+    snprintf(keep, sizeof(keep), "/m2_%.3f_%.3f_", lat, lon);
+
+    File root = LittleFS.open("/");
+    if (!root) return;
+    std::vector<String> victims;
+    for (File e = root.openNextFile(); e; e = root.openNextFile()) {
+        String name = e.name();
+        if (!name.startsWith("/")) name = "/" + name;
+        if (name.endsWith(".565") && !name.startsWith(keep))
+            victims.push_back(name);
+    }
+    root.close();
+    for (const String& v : victims) LittleFS.remove(v);
+    if (!victims.empty())
+        Serial.printf("[Map] pruned %d stale cache file(s)\n", (int)victims.size());
+}
+
 void MapLayer::precacheAll(float lat, float lon) {
     if (!_ready) return;
 
+    // Keep only this location's maps so composing all its zoom levels can't
+    // overflow the partition and start evicting the ones we just wrote.
+    pruneExcept(lat, lon);
+
     for (int i = 0; i < ZOOM_COUNT; i++) {
+        watchdogFeed();   // this whole loop blocks — don't let it look like a hang
         M5Dial.Display.fillScreen(0x0000);
         M5Dial.Display.setTextDatum(middle_center);
         M5Dial.Display.setTextColor(0x7BEF, 0x0000);

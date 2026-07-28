@@ -8,6 +8,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <math.h>
+#include "watchdog.h"
 
 // OpenSky state-vector field indices
 // [0]  icao24          string
@@ -261,6 +262,7 @@ bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
         // pause resolves most of these.
         for (int attempt = 0; attempt < 2; attempt++) {
             if (attempt > 0) client.stop();   // close the failed attempt's socket first
+            watchdogFeed();   // the TLS handshake + GET below blocks — keep WDT happy
 
             http.begin(client, url);
             if (authed)
@@ -344,6 +346,18 @@ bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
         return false;
     }
 
+    // Read the envelope's server "time" (unix seconds) first — it precedes
+    // "states" in {"time":<n>,"states":[...]} — so we can work out how stale each
+    // aircraft's position already was when the snapshot was taken, and pre-advance
+    // it by that age (otherwise interpolation extrapolates from a stale point and
+    // the mark visibly jumps backward when the next, differently-aged, poll lands).
+    long serverTime = 0;
+    if (skipPastToken(rf, "\"time\":")) {
+        int ch;
+        while ((ch = rf.read()) >= 0 && ch >= '0' && ch <= '9')
+            serverTime = serverTime * 10 + (ch - '0');
+    }
+
     // Seek to the value of "states" and check it's an array (not null). The
     // envelope is {"time":<n>,"states":[[...],...]} or "states":null.
     int c = -1;
@@ -397,6 +411,12 @@ bool fetchAircraft(float centerLat, float centerLon, float radiusKm,
         ac.onGround = s[8].as<bool>();
         ac.speedMs  = s[9].isNull() ? 0.0f : s[9].as<float>();
         ac.heading  = s[10].isNull() ? 0.0f : s[10].as<float>();
+        // Field [3] time_position: when this position was actually measured.
+        // Its age (serverTime - time_position) is how far behind "now" it is; the
+        // renderer pre-advances the mark by this so interpolation starts current.
+        long tp = s[3].isNull() ? 0 : s[3].as<long>();
+        float age = (serverTime > 0 && tp > 0) ? (float)(serverTime - tp) : 0.0f;
+        ac.posAgeS = age < 0.0f ? 0.0f : (age > 60.0f ? 60.0f : age);   // clamp 0..60s
         const char* sq = s[14].isNull() ? nullptr : s[14].as<const char*>();
         if (sq) strncpy(ac.squawk, sq, sizeof(ac.squawk) - 1);
         out.push_back(ac);

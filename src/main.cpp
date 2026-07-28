@@ -11,6 +11,7 @@
 #include "provisioning.h"
 #include "settings.h"
 #include "encoder_debounce.h"
+#include "watchdog.h"
 
 // ── State ────────────────────────────────────────────────────────────────────
 static RadarDisplay         radar;
@@ -292,6 +293,8 @@ void setup() {
     M5Dial.Display.setRotation(0);
     M5Dial.Display.setBrightness(160);
 
+    watchdogBegin();     // auto-reset if a blocking call (TLS/compose) ever wedges
+
     radar.begin();
     mapLayer.begin();
     if (!lofi::begin())
@@ -301,6 +304,15 @@ void setup() {
 
     runProvisioning();   // blocks until WiFi connected (runs portal if needed)
     loadSettings();
+
+    // Drop cached maps for any location other than the current home. Accumulated
+    // stale entries (e.g. from repeated location changes) fill the flash partition,
+    // which makes each new save evict another — thrashing endless recomposes that
+    // keep the PNG decoder resident and heap too low/fragmented for the TLS
+    // handshake (the "SSL - Memory allocation failed" freezes). Pruning lets the
+    // precache round finish, free the decoder, and settle at a healthy heap.
+    mapLayer.pruneExcept(homeLat(), homeLon());
+
     doFetch();
 
     lastFetchMs = millis();
@@ -308,6 +320,7 @@ void setup() {
 }
 
 void loop() {
+    watchdogFeed();      // heartbeat — a stalled loop for 60s triggers auto-reset
     M5Dial.update();
     checkResetCombo();
     checkSerialCommands();

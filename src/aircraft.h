@@ -11,6 +11,7 @@ struct Aircraft {
     float altM;         // barometric altitude in metres (0 if unknown)
     float speedMs;      // ground speed m/s
     float heading;      // true track, degrees (0 = north)
+    float posAgeS;      // how stale this position already was at fetch time (s)
     bool  onGround;
 
     // 7700 = general emergency, 7600 = radio failure, 7500 = hijacking

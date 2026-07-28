@@ -65,6 +65,12 @@ public:
     // but exposed for a manual "clear map cache" action if ever wanted.
     void invalidate();
 
+    // Deletes cached maps for every location EXCEPT (lat,lon). Keeps the cache
+    // bounded to the current home's handful of zoom levels so it can't fill the
+    // flash partition — a full partition made saving one level evict another,
+    // thrashing endless recomposes (constant TLS at low heap → wedge/freeze risk).
+    void pruneExcept(float lat, float lon);
+
     // Releases the ~45 KB PNG-decoder scratch buffer. Call once all zoom levels
     // are cached (composes become decoder-free cache hits), so OpenSky polls
     // regain that 45 KB — the difference between a big 200 km JSON response

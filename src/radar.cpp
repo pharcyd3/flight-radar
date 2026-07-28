@@ -107,7 +107,10 @@ void RadarDisplay::effectivePos(const Aircraft& ac, float& lat, float& lon) cons
     // marks would just jitter, and on-ground traffic isn't tracked this way.
     if (ac.onGround || ac.speedMs < INTERP_MIN_SPEED_MS) return;
 
-    float dt = (float)(millis() - _fetchMs) / 1000.0f;   // seconds since last fetch
+    // Elapsed = how stale the position already was at fetch (posAgeS) + time since
+    // the fetch. Starting from the position's true age keeps the mark at its real
+    // current estimate, so successive polls line up instead of snapping backward.
+    float dt = ac.posAgeS + (float)(millis() - _fetchMs) / 1000.0f;
     if (dt < 0.0f) dt = 0.0f;
     if (dt > INTERP_MAX_S) dt = INTERP_MAX_S;             // don't fling stale marks
 
