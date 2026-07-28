@@ -37,7 +37,9 @@ At most latitudes, even Frank's Flight Radar's largest 200&nbsp;km zoom stays co
 
 ## The lo-fi vector map
 
-Set **Map → Lo-fi** for a lightweight, offline alternative to the street map: **coastlines, national borders, rivers, and lakes** drawn as themed lines, with labels for **major cities**. Unlike the raster map, it has nothing to fetch or cache — the entire world (simplified [Natural Earth](https://www.naturalearthdata.com/) data, public domain) is **baked into the firmware** and rendered directly.
+Set **Map → Lo-fi** for a lightweight, offline alternative to the street map: **coastlines, national borders, rivers, and lakes** drawn as themed lines, with labels for **major cities** and **airports** (by IATA code). Unlike the raster map, it has nothing to fetch or cache — the entire world (simplified [Natural Earth](https://www.naturalearthdata.com/) data, public domain) is **baked into the firmware** and rendered directly.
+
+![The offline lo-fi vector map with coastlines, aircraft, and airports](images/radar-lofi.png)
 
 That makes it a good fit when you want geographic context without the weight of the street map:
 

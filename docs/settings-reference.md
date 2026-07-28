@@ -2,6 +2,8 @@
 
 Open the settings menu with a short press of the encoder button. Rotate to move the highlighted row, press to select it. For cycling options, pressing immediately advances to the next value and saves it — you stay in the menu, so you can adjust several settings in one visit. Tap anywhere to close.
 
+![The settings menu](images/settings.png)
+
 Settings are saved to flash immediately as you change them (no separate "save" step), and persist across reboots and firmware updates.
 
 ## Flight labels
@@ -96,6 +98,19 @@ See [OpenSky API Setup](opensky-setup.md#choosing-a-refresh-rate) for the quota 
 | Off | Emergency aircraft are still highlighted visually on the radar, but silently |
 
 See [Emergency Alerts](emergency-alerts.md) for details.
+
+## Set location
+
+Opens a full-screen map to pick your home location right on the device — no phone, no typing.
+
+![The Set location screen](images/set-location.png)
+
+- **Drag** the map to move your spot under the centre crosshair.
+- **Twist the dial** to zoom, from country level down to about town level, for precision.
+- The top readout shows the **nearest city**, your **coordinates**, and the current zoom radius.
+- **SET HOME** makes the crosshair location your home; **SAVE FAV** stores it to one of the three [favourite](favourite-locations.md) slots; the encoder button cancels.
+
+Because it draws on the offline [lo-fi map](map-caching.md#the-lo-fi-vector-map), panning is instant with nothing to download.
 
 ## Detect location
 

@@ -1,6 +1,13 @@
 # Frank's Flight Radar
 
+![Frank's Flight Radar boot splash](images/splash.png)
+
 **Frank's Flight Radar** turns an [M5Dial](https://docs.m5stack.com/en/core/M5Dial) (an ESP32-S3 round-screen dev board with a rotary encoder and touchscreen) into a live, standalone aircraft radar for your desk — no phone, no app, no browser tab.
+
+![Radar over the OpenStreetMap street map](images/radar-full.png)
+![Radar over the offline lo-fi vector map](images/radar-lofi.png)
+
+*The OpenStreetMap street map, and the offline lo-fi vector map (coastlines, cities, and airports).*
 
 It polls [OpenSky Network](https://opensky-network.org/)'s public flight-tracking API for real ADS-B traffic around a home location you choose, and plots it on a radar-style display with a real [OpenStreetMap](https://www.openstreetmap.org/) tile underlay.
 
