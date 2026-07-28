@@ -469,5 +469,12 @@ void loop() {
     if (!fetchInProgress && !following && mapMode() == MAP_FULL &&
         now - lastInteractionMs >= 1500UL) {
         maybePrecacheMaps();
+    } else if (mapMode() != MAP_FULL) {
+        // Lo-fi / Off: the PNG tile decoder is dead weight, and leaving its
+        // ~45 KB resident starved the TLS handshake (OpenSky's "SSL - Memory
+        // allocation failed") because free heap sat too low/fragmented. Release
+        // it so polls have headroom; a later switch to Full re-primes it on
+        // demand from an idle compose. Idempotent — a no-op once released.
+        mapLayer.releaseDecoder();
     }
 }
