@@ -324,6 +324,7 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         if ((dx * dx + dy * dy) > (PLOT_R * PLOT_R)) continue;   // outside the circle
 
         drawAircraft(ac, sx, sy, i == selectedIdx);
+        if (_following && i == selectedIdx) drawFollowInfo(ac, sx, sy);
     }
 
     drawPollIcon(lastUpdateMs, fetching);
@@ -715,6 +716,25 @@ void RadarDisplay::drawAircraft(const Aircraft& ac, int sx, int sy, bool selecte
         _g->setTextColor(emergency ? COL_HOME : (selected ? COL_SEL : COL_STATUS), COL_BG);
         _g->drawString(ac.callsign, sx, sy - 16);
     }
+}
+
+void RadarDisplay::drawFollowInfo(const Aircraft& ac, int sx, int sy) {
+    bool metric = activeUnits() == 1;
+    char altBuf[16];
+    if (ac.altM > 0.0f) {
+        if (metric) snprintf(altBuf, sizeof(altBuf), "%d m", (int)ac.altM);
+        else        snprintf(altBuf, sizeof(altBuf), "%d ft", (int)(ac.altM * 3.28084f));
+    } else {
+        snprintf(altBuf, sizeof(altBuf), "n/a");
+    }
+    int speed = metric ? (int)(ac.speedMs * 3.6f) : (int)(ac.speedMs * 1.94384f);
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%s  %d %s", altBuf, speed, metric ? "km/h" : "kts");
+
+    _g->setTextSize(1);
+    _g->setTextColor(COL_SEL, COL_BG);
+    _g->drawString(buf, sx, sy + 16);
 }
 
 void RadarDisplay::drawDetail(const Aircraft& ac) {

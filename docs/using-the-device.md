@@ -38,7 +38,7 @@ To keep an aircraft centred as it flies, **follow** it:
 1. Tap the aircraft to select it and open its detail panel.
 2. Tap the **FOLLOW** button just above the panel.
 
-The radar re-centres on that aircraft and tracks it: a **reticle** marks the tracked point, your **home** becomes a small offset marker (so you can still tell which way home is). Other traffic drifts past as the aircraft moves.
+The radar re-centres on that aircraft and tracks it: a **reticle** marks the tracked point, your **home** becomes a small offset marker (so you can still tell which way home is), and its **altitude and speed** are printed just below its mark. Other traffic drifts past as the aircraft moves.
 
 ![Follow mode tracking an aircraft](images/follow.png)
 ![Follow mode with other traffic hidden](images/follow-hide.png)

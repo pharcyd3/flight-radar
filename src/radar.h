@@ -145,6 +145,10 @@ private:
     void drawRings(float radiusKm);
     void drawZoomDots(int zoomIdx);
     void drawAircraft(const Aircraft& ac, int sx, int sy, bool selected);
+    // Altitude + speed printed just below the tracked aircraft's mark while
+    // following — the detail pill is replaced by the unfollow bar in this
+    // mode, so this is the only on-screen readout of those two numbers.
+    void drawFollowInfo(const Aircraft& ac, int sx, int sy);
     void drawTrail(const Aircraft& ac, float centerLat, float centerLon, float radiusKm);
     void drawDetail(const Aircraft& ac);
     void drawFollowButton();
