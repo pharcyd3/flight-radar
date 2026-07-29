@@ -10,6 +10,7 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 - **Heading arrows** — moving aircraft show a short arrow in their direction of travel.
 - **Position trails** — the selected aircraft leaves a fading breadcrumb trail of its recent reported positions. (Shares the **Heading trails** setting.)
 - **Colour-coded state** — airborne, on-ground (grey), selected (accent), and emergency (red, with an extra ring).
+- **Selectable aircraft icon** — plain dots with a heading arrow, or heading-oriented plane shapes.
 - **Callsign labels** — show none, only the selected aircraft, or all of them.
 - **Range rings** — three concentric rings with an **N** tick and distance labels (toggleable).
 - **Poll icon** — a small ring that counts down to the next refresh, goes solid while a request is in flight, and turns solid red if the last request failed.
@@ -33,7 +34,7 @@ Supporting behaviour:
 
 - **Tap to inspect** — tap any aircraft for a detail panel: callsign, ICAO24 address, altitude, speed, heading, country of registration, and a **GND** flag when on the ground.
 - **Rotate to cycle** — with an aircraft selected, the dial steps the selection through the visible aircraft instead of zooming.
-- **Follow mode** — tap **FOLLOW** in the detail panel to lock onto an aircraft. The view stays glued to it (a reticle marks the tracked point, home becomes an offset marker, and its altitude/speed print below its mark) as it moves. Follow is a locked mode — ordinary taps don't back out of it — with its own controls: **UNFOLLOW** to stop, **HIDE OTHERS** to declutter down to just the tracked plane, and **drag anywhere to pan** the view (e.g. to see something the buttons are covering); a plain tap with no drag recentres. Ends automatically if the aircraft leaves coverage. See [Using the Device](using-the-device.md#following-an-aircraft).
+- **Follow mode** — tap **FOLLOW** in the detail panel to lock onto an aircraft; verified in flight to hold a tracked aircraft within ~100&nbsp;m of centre, and to coast through multi-minute coverage gaps and re-acquire. The view stays glued to it (a reticle marks the tracked point, home becomes an offset marker, and its altitude/speed print below its mark) as it moves. Follow is a locked mode — ordinary taps don't back out of it — with its own controls: **UNFOLLOW** to stop, **HIDE OTHERS** to declutter down to just the tracked plane, and **drag anywhere to pan** the view (e.g. to see something the buttons are covering) — while panned, a reticle icon appears on the right edge and a plain tap anywhere recentres. Ends automatically if the aircraft leaves coverage. See [Using the Device](using-the-device.md#following-an-aircraft).
 - **Emergency squawk detection** — 7500 (hijack), 7600 (radio failure), and 7700 (general emergency) are highlighted in red with a bezel ring-flash and an optional buzzer. See [Emergency Alerts](emergency-alerts.md).
 
 ## Location & setup
@@ -49,7 +50,8 @@ Supporting behaviour:
 
 - **Keyless flight data** — [airplanes.live](https://airplanes.live/)'s free community ADS-B API. No account, no API key, nothing to configure.
 - **Selectable refresh rate** — 5/8/15/30&nbsp;s, default 8&nbsp;s (well inside airplanes.live's fair-use guidance).
-- **Rate-limit handling** — respects a `429` retry-after backoff instead of hammering the API.
+- **Off-thread fetching** — the network request runs on its own core, so the dial and touchscreen stay fully responsive even when the connection is slow or dropping.
+- **Failure tolerance** — a failed poll keeps the last known traffic on screen (marks keep dead-reckoning) rather than blanking the radar, with the poll icon red; the next scheduled poll retries.
 - **API status panel** — tap the poll icon for the last request's outcome, HTTP code, payload size, and age.
 - **Memory-safe fetching** — large responses stream via a flash scratch file and parse one aircraft at a time, so the no-PSRAM device never runs out of RAM.
 - **WiFi auto-reconnect** — reconnects automatically if the connection drops.

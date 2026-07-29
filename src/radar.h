@@ -78,11 +78,6 @@ public:
                         bool onGround, float dtS, float maxS,
                         float& lat, float& lon) const;
 
-    // True if (lat,lon) projects beyond frac × the plot radius from the centre —
-    // follow mode's trigger for re-centring on a target that's drifted too far.
-    bool offCenter(float lat, float lon,
-                   float centerLat, float centerLon, float radiusKm, float frac);
-
     // True when a tap lands on the FOLLOW button shown in the detail panel.
     bool hitFollowButton(int tx, int ty) const;
 

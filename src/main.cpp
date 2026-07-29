@@ -4,8 +4,6 @@
 
 #include "config.h"
 #include "aircraft.h"
-#include "apistatus.h"
-#include "adsblive.h"
 #include "aircraftfeed.h"
 #include "radar.h"
 #include "map.h"
@@ -51,9 +49,10 @@ static unsigned long lastAlertMs      = 0;
 
 // ── Follow mode ──────────────────────────────────────────────────────────────
 // When following, the view + fetch box centre on a tracked aircraft (by icao24)
-// instead of home. followCenter* is the current view/map centre; it only jumps
-// to the target's fresh position when the target drifts past ~45% of the plot
-// radius (the "lazy re-centre" that keeps map composes and flight-data polls bounded).
+// instead of home. followCenter* is the current view/map centre, updated every
+// loop from the target's dead-reckoned position so the fetch box travels with
+// it continuously — verified in flight to hold the aircraft within ~100 m of
+// centre, and to coast accurately through multi-minute coverage gaps.
 static bool  following       = false;
 static char  followIcao[8]   = "";
 static float followCenterLat = 0.0f;

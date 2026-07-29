@@ -100,6 +100,17 @@ There's no account, credit, or quota system to manage — pick whichever feels r
 
 See [Emergency Alerts](emergency-alerts.md) for details.
 
+## Aircraft icon
+
+How each aircraft is drawn on the radar.
+
+| Value | Behaviour |
+|---|---|
+| **Dot** *(default)* | A round mark, with a separate short arrow showing its direction of travel (the arrow follows the **Heading trails** setting) |
+| Plane | A small triangle whose nose points along the aircraft's track, so direction is readable from the shape itself — no separate arrow is drawn |
+
+Both styles use the same colour coding (airborne / on-ground / selected / emergency) and the same size increase for the selected aircraft.
+
 ## Set location
 
 Opens a full-screen map to pick your home location right on the device — no phone, no typing.

@@ -16,6 +16,7 @@ flight-radar/
 │   ├── aircraft.h       # Aircraft struct + emergency-squawk check
 │   ├── apistatus.h/.cpp # shared fetch-outcome status (poll icon / status panel)
 │   ├── adsblive.h/.cpp  # airplanes.live REST client — the flight-data source
+│   ├── aircraftfeed.h/.cpp # runs that fetch on its own FreeRTOS task, off the UI thread
 │   ├── map.h/.cpp        # OSM tile fetch, compositing, and LittleFS caching
 │   ├── lofimap.h/.cpp    # reader for the embedded lo-fi vector map blob
 │   ├── geolocate.h/.cpp  # IP auto-detect + place-name geocoding
@@ -63,7 +64,22 @@ Note that after a fresh flash, the ESP32-S3's native USB CDC interface takes a m
 
 ## Debug serial commands
 
-The firmware accepts a set of debug commands over the same USB serial connection used for logging — screenshot/pose hooks used to drive the device for the manual's screenshots and for on-device diagnosis (e.g. `INFO` for a state dump, `SHOT` to capture the current frame, `SETHOME:<lat>,<lon>` to set the home location directly). See `checkSerialCommands()` in `main.cpp` for the full list.
+The firmware accepts a set of debug commands over the same USB serial connection used for logging — pose hooks for driving the device (for the manual's screenshots) plus diagnostics for on-device measurement. See `checkSerialCommands()` in `main.cpp` for the full list; the most useful are:
+
+| Command | Purpose |
+|---|---|
+| `INFO` | State dump: aircraft count, zoom, selection, follow state, position, and the health counters below |
+| `PERF` | Times one full radar composite+push, so animation cadence can be set from a measured frame cost |
+| `TRAILS` | Dumps the breadcrumb store, including each trail's span in km **and in pixels at the current zoom** — the number that decides whether a trail is visible at all rather than hidden under the aircraft mark |
+| `ENC` | Streams raw encoder counts for 6&nbsp;s, so a physical click's tick count can be measured rather than assumed |
+| `LIST` | Current aircraft with position, speed and altitude |
+| `SHOT` | Streams the framebuffer for screenshot capture |
+
+`INFO` reports three health counters worth knowing:
+
+- **`loophz`** — `loop()` iterations per second. Touch is only sampled once per iteration, so this bounds input responsiveness. Healthy is ~100&nbsp;kHz; it collapsed below 1&nbsp;Hz when the network fetch still ran inline on the UI thread.
+- **`maxalloc`** — largest *contiguous* free block. This, not total free heap, is what predicts TLS handshake failures.
+- **`feedstack`** — unused stack on the fetch task, for checking mbedTLS headroom against real traffic.
 
 ## Regenerating the lo-fi map data
 
@@ -78,8 +94,10 @@ Tuning knobs live at the top of `tools/build_lofimap.py` (`TOL`, the per-layer D
 
 ## Hardware constraints worth knowing before changing things
 
-- **No PSRAM.** The ESP32-S3FN8 on the M5Dial has ~320&nbsp;KB of usable RAM total. The map sprite (115&nbsp;KB, RGB565, always resident) and the PNG decoder's ~44&nbsp;KB working buffer are the two largest consumers; TLS handshakes for HTTPS requests also need a non-trivial contiguous allocation. If you're debugging a crash or an intermittent `SSL - Memory allocation failed`, start by checking `ESP.getFreeHeap()` at the point of failure.
-- **The rotary encoder is noisy.** See the extensive comments in `encoder_debounce.h` — this hardware has been observed to produce spurious tick reversals well after a genuine click, which a naive "did the value change" check cannot distinguish from a real second click. Any new encoder-driven UI should reuse `EncoderDebouncer` rather than reading `M5Dial.Encoder.read()` directly.
+- **No PSRAM.** The ESP32-S3FN8 on the M5Dial has ~320&nbsp;KB of usable RAM total. The map sprite (115&nbsp;KB, RGB565, always resident) and the PNG decoder's ~44&nbsp;KB working buffer are the two largest consumers; TLS handshakes for HTTPS requests also need a non-trivial contiguous allocation. If you're debugging a crash or an intermittent `SSL - Memory allocation failed`, start by checking `ESP.getMaxAllocHeap()` (largest contiguous block) rather than `ESP.getFreeHeap()` — the total can look healthy while no single allocation of the needed size is possible. Both are reported by the `INFO` debug command.
+- **The flight-data fetch runs on its own FreeRTOS task** (`aircraftfeed.h`), pinned to core 0 alongside the WiFi stack, while `loop()` runs on core 1. Nothing on the UI thread may block on the network: a synchronous fetch there stops touch sampling and encoder polling for its whole duration, which is what made the device feel frozen. The two sides hand off a single `std::vector<Aircraft>` by swapping it under a mutex; both buffers are `reserve()`d once at startup so neither ever reallocates and fragments the contiguous block the next TLS handshake needs.
+- **Three different network timeouts, easily confused.** `client.setTimeout()` is `Stream::setTimeout` (milliseconds, per body read — `NetworkClient` does *not* override it), `setConnectionTimeout()` bounds the TCP connect, and `setHandshakeTimeout()` bounds the TLS handshake and is in **seconds**, defaulting to 120. All three need setting; a `setTimeout(10)` intended as 10 seconds is actually 10 **milliseconds** and will truncate every response on a slow link.
+- **The rotary encoder is noisy.** See the extensive comments in `encoder_debounce.h` — this hardware has been observed to produce spurious single ticks. `EncoderDebouncer` rejects them with hysteresis — a step is only emitted once the raw count moves a full detent — which is both instant and more selective than the settling timer it replaced. Any new encoder-driven UI should reuse it rather than reading `M5Dial.Encoder.read()` directly.
 
 ## Contributing
 

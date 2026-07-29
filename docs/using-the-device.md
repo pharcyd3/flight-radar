@@ -19,9 +19,9 @@ Frank's Flight Radar has three inputs: the **rotary encoder** (twist and press),
 
 ## Rotary encoder: zoom
 
-Rotate the dial to change the radar range. There are five steps: **10, 25, 50, 100, and 200&nbsp;km**. Each click moves exactly one step — the firmware deliberately waits for the reading to settle before committing to a step (a fraction of a second), which trades a small amount of responsiveness for not registering phantom double-steps from this hardware's rotary encoder.
+Rotate the dial to change the radar range. There are five steps: **10, 25, 50, 100, and 200&nbsp;km**. Each click moves exactly one step, and steps register immediately. This hardware's encoder emits occasional spurious single ticks, so the firmware only commits a step once the count has moved a full detent — sub-detent noise is rejected outright rather than waited out, which keeps the dial responsive.
 
-Changing zoom triggers an immediate re-fetch at the new radius (and composes/loads the map for that view).
+The rings, scale and map redraw instantly. Fetching fresh traffic for the new radius is deferred briefly, so spinning through several levels makes one request rather than one per level — and because fetches run off the UI thread, none of it delays the dial.
 
 ## Touch: select an aircraft
 
@@ -47,8 +47,9 @@ The radar re-centres on that aircraft and tracks it: a **reticle** marks the tra
 
 - The **rotary dial zooms** while following (the selection is locked onto your target).
 - **HIDE OTHERS** (top button) drops all the other traffic so only your target and the map remain; tap it again (**SHOW OTHERS**) to bring them back.
+- **Drag anywhere** to pan the view around the tracked aircraft — useful when a button is covering something you want to see. While panned, a small **reticle icon** appears on the right edge as a reminder; a plain tap (no drag) snaps back to centred.
 - With the **Full** map, the background **re-centres lazily** — it stays put while the aircraft drifts within view, then snaps to re-centre once it wanders far enough, briefly reloading the map there. On the **Lo-fi** or **Off** background this is instant with no reload, so following feels smoothest there.
-- Following **ends** when you tap **STOP FOLLOW**, tap any other aircraft or empty space, open the API status panel, or the aircraft leaves coverage (lands, or flies out of range).
+- Follow is a **locked mode** — ordinary taps do not back out of it. It ends when you tap **UNFOLLOW**, or when the aircraft has not been seen for 20 minutes (it has landed, or left ADS-B coverage). Through shorter gaps the view keeps coasting along the aircraft's last known heading and re-acquires it when it reappears.
 
 ## Touch: check API status
 

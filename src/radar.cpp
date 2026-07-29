@@ -252,15 +252,6 @@ int RadarDisplay::findByIcao(const std::vector<Aircraft>& aircraft,
     return -1;
 }
 
-bool RadarDisplay::offCenter(float lat, float lon,
-                             float cLat, float cLon, float radiusKm, float frac) {
-    int sx, sy;
-    worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
-    int dx = sx - CX, dy = sy - CY;
-    float lim = frac * PLOT_R;
-    return (float)(dx * dx + dy * dy) > lim * lim;
-}
-
 void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
                          float cLat, float cLon, float radiusKm, int zoomIdx,
                          int selectedIdx, unsigned long lastUpdateMs, bool fetching) {
