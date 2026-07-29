@@ -71,4 +71,3 @@ See [Settings Reference](settings-reference.md).
 
 - **Persistent settings** — every option saves to flash immediately and survives reboots and firmware updates.
 - **Factory reset** — hold the encoder button 3&nbsp;seconds, or use the hold-to-confirm menu item, to wipe WiFi credentials, location, and favourites, then re-run setup.
-- **Desktop emulator** — a Python/pygame emulator mirrors the on-device UI for development. See [Building From Source](development.md).

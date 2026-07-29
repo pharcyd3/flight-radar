@@ -6,8 +6,3 @@ site
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-emulator/.env
-emulator/__pycache__/
-emulator/location_state.json
-emulator/map_tile_cache/
-emulator/map_cache.json

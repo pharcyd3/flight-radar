@@ -2,10 +2,9 @@
 #include <M5Dial.h>
 
 // OpenStreetMap raster-tile map underlay, composited into a 240x240 RGB565
-// sprite and cached to LittleFS. Ported from the emulator's map_tile code
-// (fetch_map_tile / _choose_zoom / _deg2tile_f). On the device we can't stitch
-// a full tile grid in RAM (no PSRAM), so each tile PNG is decoded straight into
-// the sprite at its scaled offset via M5GFX drawPng.
+// sprite and cached to LittleFS. On the device we can't stitch a full tile
+// grid in RAM (no PSRAM), so each tile PNG is decoded straight into the
+// sprite at its scaled offset via M5GFX drawPng.
 class MapLayer {
 public:
     void begin();                 // mount LittleFS + allocate the sprite

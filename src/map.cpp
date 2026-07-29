@@ -17,7 +17,7 @@ static const int    TARGET_PX = 240;
 static const size_t MAP_BYTES = 240 * 240 * 2;   // RGB565 sprite buffer size
 static const uint16_t GAP_FILL = 0x2104;         // dark grey where a tile is missing
 
-// ── Web-Mercator tile maths (mirrors the emulator) ───────────────────────────
+// ── Web-Mercator tile maths ───────────────────────────────────────────────────
 
 static void deg2tileF(double lat, double lon, int z, double& xt, double& yt) {
     double latr = lat * M_PI / 180.0;

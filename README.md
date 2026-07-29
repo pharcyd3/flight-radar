@@ -17,7 +17,6 @@ Then follow the on-device WiFi setup portal — see [Getting Started](https://ph
 ## Project layout
 
 - `src/` — ESP32-S3 firmware (PlatformIO/Arduino)
-- `emulator/` — a desktop Python/pygame emulator mirroring the on-device UI
 - `docs/` — the user guide (built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/), auto-deployed to GitHub Pages)
 
 See [Building From Source](https://pharcyd3.github.io/flight-radar/development/) for details.

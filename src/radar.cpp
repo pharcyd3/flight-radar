@@ -6,7 +6,7 @@
 #include <math.h>
 #include <string.h>
 
-// ── Colour themes (RGB565) — mirrors the emulator's THEMES list ─────────────
+// ── Colour themes (RGB565) ────────────────────────────────────────────────────
 struct Theme {
     uint16_t bg, ring, ringLbl, home, ac, sel, gnd, status, overlay;
 };
@@ -42,8 +42,7 @@ static const Theme& theme() {
 
 // Fixed (not theme-dependent) dark outline drawn behind every aircraft mark.
 // The map underlay is a real, light-coloured OSM tile now — a plain small
-// dot/thin line with no outline easily disappears against it. The emulator
-// already does this (its HALO constant); it was never ported to the device.
+// dot/thin line with no outline easily disappears against it.
 static constexpr uint16_t COL_HALO = 0x0000;
 
 static constexpr float EARTH_R    = 6371.0f;              // km
@@ -737,9 +736,9 @@ void RadarDisplay::drawAircraft(const Aircraft& ac, int sx, int sy, bool selecte
         // its exact centre (the dot is filled *after* this, on top, so a line
         // starting at the centre had its first few px hidden underneath it) and
         // is long enough to actually read as a direction indicator. A dark halo
-        // drawn first (wider) gives it contrast against the map underlay,
-        // mirroring the emulator's HALO treatment — a bare 1px line in aircraft
-        // colour all but disappears over light-coloured map tiles.
+        // drawn first (wider) gives it contrast against the map underlay —
+        // a bare 1px line in aircraft colour all but disappears over
+        // light-coloured map tiles.
         if (showTrails() && !ac.onGround && ac.speedMs > 5.0f) {
             float rad  = ac.heading * (float)M_PI / 180.0f;
             float sinR = sinf(rad), cosR = cosf(rad);

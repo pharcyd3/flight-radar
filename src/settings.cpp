@@ -9,8 +9,8 @@
 #include <Preferences.h>
 
 // ── Persisted state ───────────────────────────────────────────────────────────
-// Mirrors the emulator's `self.settings` dict — each field is a small cycle
-// index into the option-label arrays declared alongside MENU_ITEMS below.
+// Each field is a small cycle index into the option-label arrays declared
+// alongside MENU_ITEMS below.
 struct SettingsState {
     uint8_t labels        = 1;  // Off/Selected/All        — default: Selected
     uint8_t theme         = 0;  // Radar/Amber/Ocean/Neon
@@ -93,8 +93,8 @@ static constexpr uint16_t S_GREY    = 0x7BEF;
 static constexpr uint16_t S_RED     = 0xF800;
 static constexpr uint16_t S_OVERLAY = 0x0861;   // panel background
 
-// Floating panel geometry — a "little box" over the live radar/map, matching
-// the emulator's centred settings panel instead of a full-screen wipe.
+// Floating panel geometry — a "little box" over the live radar/map, centred
+// on screen instead of a full-screen wipe.
 static constexpr int PANEL_X = 20, PANEL_Y = 62, PANEL_W = 200, PANEL_H = 116;
 static constexpr int PANEL_CX = PANEL_X + PANEL_W / 2;
 

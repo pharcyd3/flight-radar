@@ -3,7 +3,7 @@
 ## Requirements
 
 - [PlatformIO](https://platformio.org/) (CLI or the VS Code extension)
-- An M5Stack M5Dial for testing on real hardware, or the bundled desktop emulator for quick iteration without hardware
+- An M5Stack M5Dial for testing on real hardware
 
 ## Project layout
 
@@ -29,7 +29,6 @@ flight-radar/
 ├── tools/
 │   ├── build_lofimap.py  # regenerates lofimap.bin from Natural Earth GeoJSON
 │   └── embed_lofimap.py  # PlatformIO pre-build hook: objcopy the blob into the firmware
-├── emulator/            # desktop (pygame) emulator mirroring the on-device UI
 ├── docs/                # this documentation site (MkDocs)
 └── mkdocs.yml
 ```
@@ -57,10 +56,6 @@ while time.time() < end:
 ```
 
 Note that after a fresh flash, the ESP32-S3's native USB CDC interface takes a moment to re-enumerate — the very first few log lines immediately after reset are often missed if you attach too quickly.
-
-## The desktop emulator
-
-`emulator/emulator.py` is a Python/pygame recreation of the on-device UI, useful for quickly iterating on layout and interaction logic without needing to reflash real hardware. See the comment header in that file for its controls (scroll to zoom, click to select, right-click for settings). Like the device, it fetches from airplanes.live — no credentials or setup needed.
 
 ## Debug serial commands
 
