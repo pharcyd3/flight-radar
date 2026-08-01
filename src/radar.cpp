@@ -694,7 +694,7 @@ void RadarDisplay::pollBattery() {
     _battReadMs = now;
 
     int32_t level = M5.Power.getBatteryLevel();
-    int16_t mv    = M5.Power.getBatteryVoltage();
+    int32_t mv    = M5.Power.getBatteryVoltage();
 
     // A single LiPo cell: ~3.3 V effectively empty, ~4.2 V full. Anything
     // outside this band is not a cell we're reading.

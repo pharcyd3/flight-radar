@@ -144,6 +144,21 @@ static const int MAX_TRAILS = 28;
 // flight — a bit over 2 minutes — whatever the refresh rate is set to.
 static const unsigned long TRAIL_MIN_INTERVAL_MS = 10000UL;
 
+// ── Battery ───────────────────────────────────────────────────────────────────
+// Measured on hardware: the M5Dial exposes no battery voltage to the ESP32.
+//   - M5Unified configures no battery sensing for board_M5Dial, so
+//     getBatteryLevel() falls through to `return -2` and getBatteryVoltage()
+//     reports 0. (Its pin-identical sibling the M5DinMeter *is* configured,
+//     reading a 1:2 divider on GPIO10.)
+//   - GPIO10 is the only ADC1 pin M5Dial leaves free — GPIO4-9 drive the
+//     GC9A01 display and GPIO1-3 are taken — but it reads 4095 counts, i.e.
+//     saturated at the 3.3 V rail. A 4.1 V cell behind a 1:2 divider would
+//     read ~2050 mV / ~2540 counts, so it is not a battery sense line.
+//   - ADC2 is unusable here because WiFi owns it.
+// The gauge therefore stays hidden on this board by design. It will light up
+// unchanged if a battery source ever reports through M5.Power (a future
+// library revision, or an I2C fuel-gauge unit on Port A).
+
 // ── Filters ───────────────────────────────────────────────────────────────────
 // Min-altitude filter thresholds, metres (Off, 1,000/5,000/10,000/20,000 ft).
 static const float MIN_ALT_OPTIONS_M[]  = { 0.0f, 304.8f, 1524.0f, 3048.0f, 6096.0f };

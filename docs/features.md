@@ -13,7 +13,7 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 - **Selectable aircraft icon** — plain dots with a heading arrow, or heading-oriented plane shapes.
 - **Callsign labels** — show none, only the selected aircraft, or all of them.
 - **Range rings** — three concentric rings with an **N** tick and distance labels (toggleable).
-- **Battery gauge** — a discreet cell at the top right showing charge level, amber below 30% and red below 10%, with a charging bolt while plugged in. Hidden entirely when no battery is fitted.
+- **Battery gauge** — a discreet cell at the top right showing charge level, amber below 30% and red below 10%, with a charging bolt while plugged in. Shown only on hardware that reports battery state; the M5Dial does not, so it stays hidden there.
 - **Poll icon** — a small ring that counts down to the next refresh, goes solid while a request is in flight, and turns solid red if the last request failed.
 
 See [Using the Device](using-the-device.md).
