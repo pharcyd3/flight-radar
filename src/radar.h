@@ -22,6 +22,13 @@ public:
     void updatePollIcon(unsigned long lastUpdateMs, bool fetching) {
         _g = &M5Dial.Display;   // partial overlay — paint straight onto the display
         drawPollIcon(lastUpdateMs, fetching);
+        // Repaint the battery gauge on this path too. Otherwise, with nothing
+        // moving on screen, no full frame is composited and plugging in the
+        // charger wouldn't show until something else forced a redraw. Both are
+        // small opaque glyphs with their own halo, so painting them straight
+        // over the map is safe.
+        pollBattery();
+        drawBatteryGauge();
     }
 
     // Redraws just the API status panel (its "Ns ago" line ticks every
@@ -155,6 +162,11 @@ private:
     bool placeLabel(int lx, int ly, int textW);
     void drawRings(float radiusKm);
     void drawZoomDots(int zoomIdx);
+    // Small battery gauge, top right. Reads through cached state (see _batt*
+    // below) so a per-frame redraw doesn't re-poll the power IC.
+    void drawBatteryGauge();
+    // Refreshes the cached battery reading at most every BATT_POLL_MS.
+    void pollBattery();
     void drawAircraft(const Aircraft& ac, int sx, int sy, bool selected);
     // "Plane" icon style: a single heading-oriented triangle instead of a dot
     // + separate arrow. Shares drawAircraft()'s colour/size/emergency logic.
@@ -204,6 +216,16 @@ private:
 
     bool _showStatus = false;
 
+    // Cached battery state. The reading goes over the power IC and changes far
+    // slower than the ~2 Hz redraw, so it's refreshed on a timer instead of
+    // per frame. _battPresent stays false on a device with no battery fitted
+    // (or one whose PMIC can't report), which hides the gauge entirely rather
+    // than showing a meaningless empty cell.
+    int           _battLevel    = -1;      // 0-100, -1 = unknown
+    bool          _battCharging = false;
+    bool          _battPresent  = false;
+    unsigned long _battReadMs   = 0;
+
     // Per-frame label-collision list, shared by city and airport labels so they
     // don't overprint. Reset at the top of each draw().
     struct LabelBox { int x0, y0, x1, y1; };
@@ -219,6 +241,18 @@ private:
     static constexpr int ICON_Y  = 232;
     static constexpr int ICON_R  = 7;    // outer radius
     static constexpr int ICON_R0 = 4;    // inner radius (3 px ring)
+
+    // Battery gauge — top right, deliberately outside every other element's
+    // box so it never has to be hidden or moved: clear of the "N" tick and the
+    // zoom dots (which end at x=154), above follow mode's SHOW/HIDE OTHERS
+    // button (y=40), and well outside the status panel (y=66..190). Kept small
+    // and inside the round bezel — its far corner sits ~112 px from centre,
+    // against the 120 px glass radius.
+    static constexpr int BATT_X = 158;   // body left
+    static constexpr int BATT_Y = 24;    // body top
+    static constexpr int BATT_W = 20;
+    static constexpr int BATT_H = 10;
+    static constexpr unsigned long BATT_POLL_MS = 5000;
 
     // FOLLOW button — sits just above the detail pill (which starts y=148)
     static constexpr int FBTN_X = 68;

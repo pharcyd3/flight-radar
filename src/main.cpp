@@ -285,6 +285,17 @@ static void checkSerialCommands() {
         return;
     }
     if (line == "SETLOC")    { renderSetLocationPreview(radar); return; }
+    // Raw power-IC readings behind the battery gauge's present/charging
+    // decision — the gauge deliberately hides itself when these look
+    // implausible, so this is how to tell "no battery" from "bad reading".
+    if (line == "BATT") {
+        Serial.printf("BATT level=%d voltage=%dmV current=%dmA charging=%d\n",
+                      (int)M5.Power.getBatteryLevel(),
+                      (int)M5.Power.getBatteryVoltage(),
+                      (int)M5.Power.getBatteryCurrent(),
+                      (int)M5.Power.isCharging());
+        return;
+    }
     if (line == "TRAILS") {
         const char* focus = following ? followIcao
                           : (selectedAc >= 0 && selectedAc < (int)aircraft.size()

@@ -15,6 +15,7 @@ Frank's Flight Radar has three inputs: the **rotary encoder** (twist and press),
     - Orange — currently selected (tapped)
     - **Red, with an extra ring** — squawking an emergency code (7500/7600/7700); see [Emergency Alerts](emergency-alerts.md)
 - Aircraft **glide smoothly** between refreshes rather than jumping — their positions are dead-reckoned from heading and speed, so motion looks continuous even between polls.
+- A small **battery gauge** sits at the top right when a battery is fitted: an outline that fills in proportion to charge, turning amber below 30% and red below 10%. While the device is plugged in and charging, a bolt appears through it. On USB power with no battery fitted, nothing is shown.
 - A small **poll icon** sits near the bottom of the screen: a shrinking ring counts down to the next automatic refresh, a solid ring means a request is in flight, and a **solid red ring** means the last request failed.
 
 ## Rotary encoder: zoom

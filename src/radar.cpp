@@ -289,6 +289,8 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     _g->setTextDatum(MC_DATUM);
     drawRings(radiusKm);
     drawZoomDots(zoomIdx);
+    pollBattery();
+    drawBatteryGauge();
 
     if (_following) {
         // Home shown at its true offset from the centre (unchanged by panning).
@@ -670,6 +672,78 @@ void RadarDisplay::drawLoFiPan(float cLat, float cLon, float radiusKm) {
     _g->fillCircle(CX, CY, 2, COL_HOME);
 
     if (useSprite) mapLayer.pushScene();
+}
+
+// Refresh the cached battery reading, at most every BATT_POLL_MS.
+//
+// Caveat worth knowing before debugging this: M5Unified does not configure any
+// battery sensing for board_M5Dial. Boards that do (the near-identical
+// M5DinMeter, for one) name an ADC channel and divider ratio in
+// Power_Class::begin(); M5Dial names none, so getBatteryLevel() falls through
+// to `return -2`. If that is still true on your library version the gauge
+// simply won't appear — which is the intended failure, not a silent bug.
+//
+// So take a level where we can get one and fall back to deriving it from
+// voltage, since a board can report a usable voltage without a percentage.
+// Requiring a plausible cell voltage either way keeps a gauge from being drawn
+// off the USB rail on a device with no cell fitted. The BATT debug command
+// prints the raw values behind this decision.
+void RadarDisplay::pollBattery() {
+    unsigned long now = millis();
+    if (_battReadMs != 0 && now - _battReadMs < BATT_POLL_MS) return;
+    _battReadMs = now;
+
+    int32_t level = M5.Power.getBatteryLevel();
+    int16_t mv    = M5.Power.getBatteryVoltage();
+
+    // A single LiPo cell: ~3.3 V effectively empty, ~4.2 V full. Anything
+    // outside this band is not a cell we're reading.
+    const bool haveMv = (mv > 3000 && mv < 4500);
+    if ((level < 0 || level > 100) && haveMv) {
+        level = ((int32_t)mv - 3300) * 100 / (4200 - 3300);
+        if (level < 0)   level = 0;
+        if (level > 100) level = 100;
+    }
+
+    _battPresent  = (level >= 0 && level <= 100 && haveMv);
+    _battLevel    = _battPresent ? (int)level : -1;
+    _battCharging = (M5.Power.isCharging() == m5::Power_Class::is_charging);
+}
+
+// Small battery cell, top right. Outline + proportional fill, with a bolt
+// through it while charging — the same glyph in both states, so it reads as
+// one indicator rather than two different ones appearing and disappearing.
+void RadarDisplay::drawBatteryGauge() {
+    if (!_battPresent) return;
+
+    const int x = BATT_X, y = BATT_Y, w = BATT_W, h = BATT_H;
+
+    // Dark halo behind the whole glyph, for the same reason the aircraft marks
+    // have one: this sits over the map, which can be light.
+    _g->fillRect(x - 1, y - 1, w + 5, h + 2, COL_HALO);
+
+    uint16_t col = (_battLevel <= 10) ? COL_HOME        // critical
+                 : (_battLevel <= 30) ? COL_SEL         // low
+                                      : COL_RING_LBL;   // normal
+
+    _g->drawRect(x, y, w, h, col);                      // body
+    _g->fillRect(x + w, y + 3, 2, h - 6, col);          // terminal nub
+
+    // Proportional fill inside a 1 px gap from the outline.
+    int innerW = w - 4;
+    int fill   = (_battLevel * innerW + 50) / 100;
+    if (fill > 0) _g->fillRect(x + 2, y + 2, fill, h - 4, col);
+
+    if (_battCharging) {
+        // Bolt, drawn as two triangles. Outlined in the halo colour first so it
+        // stays legible whether it lands on the filled or the empty part.
+        int bx = x + w / 2, by = y + h / 2;
+        for (int d = 1; d >= 0; --d) {
+            uint16_t c = d ? COL_HALO : COL_SEL;
+            _g->fillTriangle(bx + 1 + d, by - 4 - d, bx - 3 - d, by + 1 + d, bx + d, by + 1, c);
+            _g->fillTriangle(bx - 1 - d, by + 4 + d, bx + 3 + d, by - 1 - d, bx - d, by - 1, c);
+        }
+    }
 }
 
 void RadarDisplay::drawRings(float radiusKm) {
