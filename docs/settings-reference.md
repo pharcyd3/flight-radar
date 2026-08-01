@@ -136,6 +136,14 @@ Opens the WiFi captive portal (`Franks-Flight-Radar-Setup` / `192.168.4.1`) to c
 
 Opens a picker for your three saved favourite locations (set via **Set location** or **Location & Favourites**). Rotate to highlight one, press to make it your active home location. See [Favourite Locations](favourite-locations.md).
 
+## Power Off
+
+Switches the device off. Only meaningful when running on battery: it releases the M5Dial's power-hold latch, cutting power to the board. Press the **side button** to switch back on.
+
+With USB attached the port keeps supplying power, so the device comes straight back up rather than staying off — unplug first if you want it to stay off.
+
+There's no confirmation step, since recovering is a single button press.
+
 ## Factory Reset
 
 Hold-to-confirm (3 seconds) reset that wipes WiFi credentials, home location, and saved favourites, then reboots into first-boot setup. Releasing early, tapping the screen, or 15 seconds of inactivity cancels it.

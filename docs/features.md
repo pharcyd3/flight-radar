@@ -71,4 +71,5 @@ See [Settings Reference](settings-reference.md).
 ## System & reliability
 
 - **Persistent settings** — every option saves to flash immediately and survives reboots and firmware updates.
+- **Power off** — a menu item that cuts power via the M5Dial's power-hold latch when running on battery; the side button switches it back on.
 - **Factory reset** — hold the encoder button 3&nbsp;seconds, or use the hold-to-confirm menu item, to wipe WiFi credentials, location, and favourites, then re-run setup.

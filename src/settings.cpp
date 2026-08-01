@@ -153,12 +153,22 @@ static const char* OPTS_ICON[]    = { "Dot", "Plane" };
 
 enum class ItemKind : uint8_t { Cycle, Action, Danger };
 
+// What an Action/Danger row actually does. Named rather than inferred from the
+// row's position: the dispatch below used to index backwards from the end of
+// MENU_ITEMS, so inserting any new action silently shifted every branch onto
+// the wrong handler.
+enum class MenuAction : uint8_t {
+    None, SetLocation, DetectLocation, LocationPortal, SavedLocations,
+    PowerOff, FactoryReset,
+};
+
 struct MenuItem {
     const char*       label;
     ItemKind          kind;
     const char* const* options;   // Cycle only
     int               optionCount;
     uint8_t*          value;      // Cycle only — points into _s
+    MenuAction        action;     // Action/Danger only
 };
 
 static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
@@ -169,23 +179,45 @@ static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircra
                                     unsigned long lastUpdateMs, bool fetching);
 static void runSetLocation(RadarDisplay& radar);
 
+// Cuts power by releasing the M5Dial's power-hold latch (GPIO46), which
+// M5.Power.powerOff() pulses for us. This only truly switches off when running
+// on battery — with USB attached the port keeps supplying power, so the device
+// comes straight back up. Press the side button to switch on again.
+static void runPowerOff() {
+    auto& d = *panelG();
+    d.fillRoundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 8, S_OVERLAY);
+    d.drawRoundRect(PANEL_X, PANEL_Y, PANEL_W, PANEL_H, 8, S_ORANGE);
+    d.setTextDatum(MC_DATUM);
+    d.setTextSize(1);
+    d.setTextColor(S_GREEN, S_OVERLAY);
+    d.drawString("Powering off...", PANEL_CX, PANEL_Y + 44);
+    d.setTextColor(S_GREY, S_OVERLAY);
+    d.drawString("side button to switch on", PANEL_CX, PANEL_Y + 66);
+    panelShow();
+    delay(1200);
+    M5.Power.powerOff();
+    // Reached only on USB power, where the latch can't cut the supply.
+    delay(400);
+}
+
 static const MenuItem MENU_ITEMS[] = {
-    { "Flight labels",       ItemKind::Cycle,  OPTS_LABELS,  3, &_s.labels },
-    { "Colour theme",        ItemKind::Cycle,  OPTS_THEME,   4, &_s.theme },
-    { "Units",               ItemKind::Cycle,  OPTS_UNITS,   2, &_s.units },
-    { "Traffic",             ItemKind::Cycle,  OPTS_FILTER,  2, &_s.filter },
-    { "Min altitude",        ItemKind::Cycle,  OPTS_MINALT,  5, &_s.minalt },
-    { "Heading trails",      ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.trails },
-    { "Range rings",         ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.rings },
-    { "Map",                 ItemKind::Cycle,  OPTS_MAP,     3, &_s.map },
-    { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, REFRESH_OPTION_COUNT, &_s.refresh },
-    { "Buzz on Emergency",   ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.buzzEmergency },
-    { "Aircraft icon",       ItemKind::Cycle,  OPTS_ICON,    2, &_s.iconStyle },
-    { "Set location",        ItemKind::Action, nullptr,      0, nullptr },
-    { "Detect location",     ItemKind::Action, nullptr,      0, nullptr },
-    { "Location & Favourites", ItemKind::Action, nullptr,    0, nullptr },
-    { "Saved Locations",     ItemKind::Action, nullptr,      0, nullptr },
-    { "Factory Reset",       ItemKind::Danger, nullptr,      0, nullptr },
+    { "Flight labels",       ItemKind::Cycle,  OPTS_LABELS,  3, &_s.labels , MenuAction::None },
+    { "Colour theme",        ItemKind::Cycle,  OPTS_THEME,   4, &_s.theme , MenuAction::None },
+    { "Units",               ItemKind::Cycle,  OPTS_UNITS,   2, &_s.units , MenuAction::None },
+    { "Traffic",             ItemKind::Cycle,  OPTS_FILTER,  2, &_s.filter , MenuAction::None },
+    { "Min altitude",        ItemKind::Cycle,  OPTS_MINALT,  5, &_s.minalt , MenuAction::None },
+    { "Heading trails",      ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.trails , MenuAction::None },
+    { "Range rings",         ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.rings , MenuAction::None },
+    { "Map",                 ItemKind::Cycle,  OPTS_MAP,     3, &_s.map , MenuAction::None },
+    { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, REFRESH_OPTION_COUNT, &_s.refresh , MenuAction::None },
+    { "Buzz on Emergency",   ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.buzzEmergency , MenuAction::None },
+    { "Aircraft icon",       ItemKind::Cycle,  OPTS_ICON,    2, &_s.iconStyle , MenuAction::None },
+    { "Set location",        ItemKind::Action, nullptr,      0, nullptr, MenuAction::SetLocation },
+    { "Detect location",     ItemKind::Action, nullptr,      0, nullptr, MenuAction::DetectLocation },
+    { "Location & Favourites", ItemKind::Action, nullptr,    0, nullptr, MenuAction::LocationPortal },
+    { "Saved Locations",     ItemKind::Action, nullptr,      0, nullptr, MenuAction::SavedLocations },
+    { "Power Off",           ItemKind::Action, nullptr,      0, nullptr, MenuAction::PowerOff },
+    { "Factory Reset",       ItemKind::Danger, nullptr,      0, nullptr, MenuAction::FactoryReset },
 };
 static const int MENU_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 
@@ -607,16 +639,20 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
                 continue;
             }
 
-            if (menuIdx == MENU_COUNT - 5) {         // Set location (on-device map)
-                runSetLocation(radar);
-            } else if (menuIdx == MENU_COUNT - 4) {  // Detect location (IP)
-                runDetectLocation();
-            } else if (menuIdx == MENU_COUNT - 3) {  // Location & API Keys
-                runLocationPortal();
-            } else if (menuIdx == MENU_COUNT - 2) {  // Saved Locations
-                runLocationPicker(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
-            } else {                                  // Factory Reset
-                runFactoryResetConfirm(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
+            switch (item.action) {
+                case MenuAction::SetLocation:    runSetLocation(radar); break;
+                case MenuAction::DetectLocation: runDetectLocation();   break;
+                case MenuAction::LocationPortal: runLocationPortal();   break;
+                case MenuAction::SavedLocations:
+                    runLocationPicker(radar, aircraft, homeLat, homeLon, radiusKm,
+                                      zoomIdx, lastUpdateMs, fetching);
+                    break;
+                case MenuAction::PowerOff:       runPowerOff();         break;
+                case MenuAction::FactoryReset:
+                    runFactoryResetConfirm(radar, aircraft, homeLat, homeLon, radiusKm,
+                                           zoomIdx, lastUpdateMs, fetching);
+                    break;
+                default: break;
             }
             return;  // back to radar after handling the selected item
         }
