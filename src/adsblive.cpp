@@ -70,7 +70,7 @@ static bool skipPastToken(File& f, const char* token) {
 }
 
 bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
-                           std::vector<Aircraft>& out) {
+                           std::vector<Aircraft>& out, const char* keepIcao) {
     out.clear();
 
     // Fail fast if WiFi isn't actually associated yet — e.g. mid-reconnect
@@ -193,7 +193,14 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
 
     JsonDocument elem;
     DeserializationError err{};
-    while ((int)out.size() < MAX_AIRCRAFT) {
+    // Keep scanning past the cap only while still hunting for keepIcao — see
+    // the header note. Once it's found (or was never wanted) we stop, so the
+    // common case costs nothing.
+    const bool wantKeep = (keepIcao && keepIcao[0]);
+    bool       gotKeep  = false;
+
+    while (true) {
+        if ((int)out.size() >= MAX_AIRCRAFT && (!wantKeep || gotKeep)) break;
         do {
             c = rf.peek();
             if (c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r') rf.read();
@@ -245,7 +252,19 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
         float age  = elem["seen_pos"].isNull() ? 0.0f : elem["seen_pos"].as<float>();
         ac.posAgeS = age < 0.0f ? 0.0f : (age > 60.0f ? 60.0f : age);
 
-        out.push_back(ac);
+        if ((int)out.size() < MAX_AIRCRAFT) {
+            out.push_back(ac);
+            if (wantKeep && strncmp(ac.icao24, keepIcao, sizeof(ac.icao24)) == 0)
+                gotKeep = true;
+        } else if (wantKeep && !gotKeep &&
+                   strncmp(ac.icao24, keepIcao, sizeof(ac.icao24)) == 0) {
+            // Past the cap and this is the tracked aircraft: displace the last
+            // one parsed. Which arbitrary aircraft we drop doesn't matter; the
+            // one being followed does.
+            out.back() = ac;
+            gotKeep    = true;
+            break;
+        }
     }
     rf.close();
     LittleFS.remove(JSON_TMP);

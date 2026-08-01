@@ -92,6 +92,11 @@ static const int           REFRESH_DEFAULT      = 1;   // 8 s
 // committed heap, directly out of the contiguous block each TLS handshake
 // needs. A 200 km fetch over UK airspace returns ~30, so 80 keeps a wide
 // margin over real traffic while returning ~7 KB to that block.
+//
+// The API returns no particular order, so raising or lowering this does not
+// decide *which* aircraft survive. A followed aircraft is protected explicitly
+// instead — see adsblive.h's keepIcao — rather than relying on it landing
+// inside the cut.
 static const int MAX_AIRCRAFT = 80;
 
 // ── Dead-reckoning interpolation ───────────────────────────────────────────────

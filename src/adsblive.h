@@ -16,5 +16,12 @@
 // one aircraft at a time rather than buffering it whole — this no-PSRAM board's
 // heap can't reliably hold a big response, the TLS context, and the JSON parser
 // all at once. Reports through the shared apiStatus() snapshot (see apistatus.h).
+// `keepIcao` (may be null/empty) is an aircraft that must survive the
+// MAX_AIRCRAFT cap. Parsing otherwise stops at the cap, and the API returns no
+// particular order, so in dense airspace a followed aircraft could sit past the
+// cut and vanish from the set — ending the follow for no reason other than its
+// position in the response. When set, scanning continues past the cap looking
+// only for that one aircraft.
 bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
-                           std::vector<Aircraft>& out);
+                           std::vector<Aircraft>& out,
+                           const char* keepIcao = nullptr);

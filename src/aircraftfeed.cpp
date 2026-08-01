@@ -3,6 +3,7 @@
 #include "config.h"
 
 #include <Arduino.h>
+#include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -47,6 +48,7 @@ volatile bool _resultOk   = false;
 // the task only after it takes _goSem (which the UI gives after writing them),
 // so that ordering alone makes them safe without a lock.
 float _reqLat = 0.0f, _reqLon = 0.0f, _reqRadiusKm = 0.0f;
+char  _reqKeep[8] = "";
 
 void taskMain(void*) {
     for (;;) {
@@ -54,7 +56,7 @@ void taskMain(void*) {
 
         // Parses straight into the hand-off buffer — safe unlocked, see the
         // ownership note on _result.
-        bool ok = fetchAircraftAdsbLive(_reqLat, _reqLon, _reqRadiusKm, _result);
+        bool ok = fetchAircraftAdsbLive(_reqLat, _reqLon, _reqRadiusKm, _result, _reqKeep);
 
         xSemaphoreTake(_mtx, portMAX_DELAY);
         // On failure _result was cleared by the fetch before it gave up, and
@@ -81,9 +83,12 @@ void begin() {
                             TASK_PRIO, &_task, TASK_CORE);
 }
 
-bool request(float lat, float lon, float radiusKm) {
+bool request(float lat, float lon, float radiusKm, const char* keepIcao) {
     if (!_task || _busy) return false;
     _reqLat = lat; _reqLon = lon; _reqRadiusKm = radiusKm;
+    if (keepIcao) { strncpy(_reqKeep, keepIcao, sizeof(_reqKeep) - 1);
+                    _reqKeep[sizeof(_reqKeep) - 1] = '\0'; }
+    else          { _reqKeep[0] = '\0'; }
     _busy = true;
     xSemaphoreGive(_goSem);
     return true;

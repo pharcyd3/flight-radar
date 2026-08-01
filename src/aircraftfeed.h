@@ -22,8 +22,9 @@ namespace feed {
 void begin();
 
 // Asks for a fetch centred on (lat,lon) with the given radius. Returns false
-// (and does nothing) if a fetch is already in flight.
-bool request(float lat, float lon, float radiusKm);
+// (and does nothing) if a fetch is already in flight. `keepIcao` (may be null)
+// names an aircraft that must survive the MAX_AIRCRAFT cap — see adsblive.h.
+bool request(float lat, float lon, float radiusKm, const char* keepIcao = nullptr);
 
 // True while a request is in flight. Drives the poll icon's "in flight" look,
 // and gates heap-hungry work (map composes) that must not overlap a TLS

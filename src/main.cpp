@@ -334,7 +334,46 @@ static void checkEmergency() {
 // flight" look from feed::busy() on the next scheduled redraw, so there's no
 // need to force an extra full-frame composite here.
 static void startFetch() {
-    feed::request(viewLat(), viewLon(), displayRadiusKm());
+    // While following, name the tracked aircraft so it survives the
+    // MAX_AIRCRAFT cap even in dense airspace (see adsblive.h).
+    feed::request(viewLat(), viewLon(), displayRadiusKm(),
+                  following ? followIcao : nullptr);
+}
+
+// Store the followed aircraft's latest state, deriving a velocity when the feed
+// doesn't give one.
+//
+// Some sources report a position with no ground speed at all (satellite and
+// relayed reports do this routinely — every mid-Atlantic aircraft observed had
+// gs missing). speedMs then reads 0, dead reckoning declines to move anything
+// that slow, and the fetch box stops coasting — so the first coverage gap loses
+// the aircraft, which is precisely when coasting matters most.
+//
+// Two consecutive fixes give the missing velocity directly. Anything outside a
+// sane airliner range is ignored rather than trusted.
+static void updateFollowSnapshot(const Aircraft& ac) {
+    if (followHaveLastAc && !ac.onGround && ac.speedMs < INTERP_MIN_SPEED_MS) {
+        float dtS = (float)(millis() - followLastAcMs) / 1000.0f;
+        if (dtS > 1.0f) {
+            float north = (ac.lat - followLastAc.lat) * 111.0f;
+            float east  = (ac.lon - followLastAc.lon) * 111.0f *
+                          cosf(ac.lat * (float)M_PI / 180.0f);
+            float km    = sqrtf(north * north + east * east);
+            float sp    = km * 1000.0f / dtS;
+            if (sp >= INTERP_MIN_SPEED_MS && sp < 400.0f) {   // < ~1440 km/h
+                followLastAc         = ac;
+                followLastAc.speedMs = sp;
+                float brg = atan2f(east, north) * 180.0f / (float)M_PI;
+                followLastAc.heading = (brg < 0.0f) ? brg + 360.0f : brg;
+                followLastAcMs       = millis();
+                followHaveLastAc     = true;
+                return;
+            }
+        }
+    }
+    followLastAc     = ac;
+    followLastAcMs   = millis();
+    followHaveLastAc = true;
 }
 
 // Drains a completed fetch, if there is one, and does the bookkeeping that has
@@ -368,9 +407,7 @@ static void collectFetch() {
         if (idx >= 0) {
             selectedAc       = idx;
             followLastSeenMs = millis();
-            followLastAc     = aircraft[idx];
-            followLastAcMs   = millis();
-            followHaveLastAc = true;
+            updateFollowSnapshot(aircraft[idx]);
         } else if (ok) {
             // Only a *successful* poll that didn't contain the target counts as
             // a miss — a failed one says nothing about where the plane is, and
