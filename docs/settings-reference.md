@@ -128,9 +128,21 @@ Because it draws on the offline [lo-fi map](map-caching.md#the-lo-fi-vector-map)
 
 Re-detects your home location from the device's public IP address — no typing, no captive portal. Useful after moving, or as a quick way to re-centre. Accuracy is city-level and can be thrown off by a VPN; for a precise fix, use **Location & Favourites** (place-name search or manual coordinates) instead.
 
-## Location & Favourites
+## Web Config
 
-Opens the WiFi captive portal (`Franks-Flight-Radar-Setup` / `192.168.4.1`) to change your home location or edit your three saved favourite locations (including naming them) — **without** erasing your saved WiFi connection. You can set the location three ways: **leave it blank** to auto-detect from your network, type a **place name** (e.g. `Berlin`) to geocode it, or enter **coordinates** directly. See [Getting Started](getting-started.md).
+Shows where to reach the device's web page. The page is **always running** on your home network — you don't need this menu item to use it, it just tells you the address:
+
+```
+http://flightradar.local
+```
+
+(plus the raw IP, in case your network doesn't do mDNS name resolution).
+
+Open it from any browser on the same network to set your **home location** — by place name, by coordinates, or blank to auto-detect — and to name and edit your three [favourite locations](favourite-locations.md). Changes save straight to the device; no restart, and the radar keeps running the whole time.
+
+The page leads with **Setup** (location and favourites), with **Configure WiFi** alongside it for changing networks.
+
+If the device isn't on WiFi there's nothing to point you at, so this falls back to the old captive-portal AP (`Franks-Flight-Radar-Setup` / `192.168.4.1`) — which is also the only way to enter credentials for a new network. See [Getting Started](getting-started.md).
 
 ## Saved Locations
 

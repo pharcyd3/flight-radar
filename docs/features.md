@@ -41,6 +41,7 @@ Supporting behaviour:
 ## Location & setup
 
 - **Captive-portal setup** — first boot broadcasts a `Franks-Flight-Radar-Setup` WiFi network with a browser-based wizard for WiFi and location. See [Getting Started](getting-started.md).
+- **Always-on web config** — once on your network the device serves its settings page at **`http://flightradar.local`** continuously, so location and favourites can be changed from any browser without touching the device, dropping its WiFi, or interrupting the radar.
 - **IP auto-detect** — leave the location fields blank and the device locates itself (approximately, from its public IP) once online. No coordinate lookup needed.
 - **Place-name search** — type a place (e.g. `Berlin`) instead of coordinates; it's geocoded via OpenStreetMap after the device reconnects.
 - **Manual coordinates** — enter precise decimal lat/lon if you prefer.

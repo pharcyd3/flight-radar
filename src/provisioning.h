@@ -10,6 +10,21 @@ void runProvisioning();
 // times out. Call from the settings menu.
 void runLocationPortal();
 
+// ── Always-on web config ──────────────────────────────────────────────────────
+// Starts a non-blocking config portal on the *home network* (not an AP), served
+// at http://flightradar.local and at the device's IP. Call once after WiFi is
+// up. Unlike runLocationPortal(), this never drops the WiFi connection and
+// never blocks the UI — it is serviced a slice at a time from the main loop.
+void startWebConfig();
+
+// Services the web portal and applies anything submitted. Call every loop; it
+// returns immediately when there's nothing to do.
+void webConfigLoop();
+
+// "flightradar.local" plus the current IP, for showing on screen. Returns
+// nullptr if the portal isn't running (no WiFi).
+const char* webConfigAddress();
+
 // Settings-menu action: approximate and set home from the device's public IP
 // (no typing). Draws its own progress/result screens. Returns true if a new home
 // was set. Assumes the device is online.

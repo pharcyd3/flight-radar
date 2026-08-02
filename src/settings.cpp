@@ -6,6 +6,7 @@
 #include "map.h"
 #include "encoder_debounce.h"
 #include <M5Dial.h>
+#include <WiFi.h>
 #include <Preferences.h>
 
 // ── Persisted state ───────────────────────────────────────────────────────────
@@ -179,6 +180,39 @@ static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircra
                                     unsigned long lastUpdateMs, bool fetching);
 static void runSetLocation(RadarDisplay& radar);
 
+// "Web Config" — the page is already live on the home network, so this just
+// says where to find it rather than tearing down WiFi to stand up an AP. If
+// there's no connection there is nothing to point at, so it falls back to the
+// old AP portal, which is also the only way to enter new WiFi credentials.
+static void runWebConfigInfo(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
+                             float homeLat, float homeLon, float radiusKm, int zoomIdx,
+                             unsigned long lastUpdateMs, bool fetching) {
+    const char* addr = webConfigAddress();
+    if (!addr) { runLocationPortal(); return; }
+
+    drawBackdrop(radar, aircraft, homeLat, homeLon, radiusKm, zoomIdx, lastUpdateMs, fetching);
+    panelFrame("WEB CONFIG");
+    auto& d = *panelG();
+    d.setTextDatum(MC_DATUM);
+    d.setTextColor(S_GREY, S_OVERLAY);
+    d.drawString("Open in any browser", PANEL_CX, PANEL_Y + 36);
+    d.setTextColor(S_GREEN, S_OVERLAY);
+    d.drawString(addr, PANEL_CX, PANEL_Y + 56);
+    d.setTextColor(S_GREY, S_OVERLAY);
+    d.drawString(WiFi.localIP().toString().c_str(), PANEL_CX, PANEL_Y + 74);
+    d.drawString("press or tap to close", PANEL_CX, PANEL_Y + PANEL_H - 12);
+    panelShow();
+
+    unsigned long until = millis() + 30000;
+    delay(250);
+    while (millis() < until) {
+        M5Dial.update();
+        webConfigLoop();                       // keep serving while this is shown
+        if (M5Dial.BtnA.wasReleased() || tappedToExit()) return;
+        delay(20);
+    }
+}
+
 // Cuts power by releasing the M5Dial's power-hold latch (GPIO46), which
 // M5.Power.powerOff() pulses for us. This only truly switches off when running
 // on battery — with USB attached the port keeps supplying power, so the device
@@ -214,7 +248,7 @@ static const MenuItem MENU_ITEMS[] = {
     { "Aircraft icon",       ItemKind::Cycle,  OPTS_ICON,    2, &_s.iconStyle , MenuAction::None },
     { "Set location",        ItemKind::Action, nullptr,      0, nullptr, MenuAction::SetLocation },
     { "Detect location",     ItemKind::Action, nullptr,      0, nullptr, MenuAction::DetectLocation },
-    { "Location & Favourites", ItemKind::Action, nullptr,    0, nullptr, MenuAction::LocationPortal },
+    { "Web Config",          ItemKind::Action, nullptr,      0, nullptr, MenuAction::LocationPortal },
     { "Saved Locations",     ItemKind::Action, nullptr,      0, nullptr, MenuAction::SavedLocations },
     { "Power Off",           ItemKind::Action, nullptr,      0, nullptr, MenuAction::PowerOff },
     { "Factory Reset",       ItemKind::Danger, nullptr,      0, nullptr, MenuAction::FactoryReset },
@@ -642,7 +676,8 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
             switch (item.action) {
                 case MenuAction::SetLocation:    runSetLocation(radar); break;
                 case MenuAction::DetectLocation: runDetectLocation();   break;
-                case MenuAction::LocationPortal: runLocationPortal();   break;
+                case MenuAction::LocationPortal: runWebConfigInfo(radar, aircraft, homeLat, homeLon,
+                                                                 radiusKm, zoomIdx, lastUpdateMs, fetching); break;
                 case MenuAction::SavedLocations:
                     runLocationPicker(radar, aircraft, homeLat, homeLon, radiusKm,
                                       zoomIdx, lastUpdateMs, fetching);

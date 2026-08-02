@@ -5,6 +5,7 @@
 #include "settings.h"
 #include <M5Dial.h>
 #include <WiFiManager.h>
+#include <ESPmDNS.h>
 #include <Preferences.h>
 
 // ── Stored home location ──────────────────────────────────────────────────────
@@ -453,4 +454,206 @@ void checkResetCombo() {
     if (held && (millis() - pressStart) >= 3000UL) {
         factoryReset();
     }
+}
+
+
+// ── Always-on web config ──────────────────────────────────────────────────────
+// The portal used to mean dropping the WiFi connection, standing up an AP, and
+// blocking the device for up to 3 minutes. WiFiManager can instead run its web
+// server against the existing station connection and be serviced incrementally,
+// so the same page is reachable from any browser on the network at any time
+// without interrupting the radar at all.
+//
+// Parameters are allocated once and kept for the life of the device: the portal
+// is permanently live, so they cannot be stack locals the way the one-shot AP
+// portal's were.
+
+static WiFiManager*          _wcWm = nullptr;
+static WiFiManagerParameter* _wcPlace = nullptr;
+static WiFiManagerParameter* _wcLat   = nullptr;
+static WiFiManagerParameter* _wcLon   = nullptr;
+static WiFiManagerParameter* _wcFavName[FAV_COUNT] = { nullptr };
+static WiFiManagerParameter* _wcFavLat [FAV_COUNT] = { nullptr };
+static WiFiManagerParameter* _wcFavLon [FAV_COUNT] = { nullptr };
+static bool _wcActive = false;
+static char _wcAddress[64] = "";
+static bool _wcApplyPending = false;   // set by the save callback, acted on in the loop
+
+static const char WC_HOSTNAME[] = "flightradar";
+
+// Buffers the parameters point at. WiFiManagerParameter keeps its own copy of
+// the value, but these back the labels/ids, which must outlive construction.
+static char _wcFavIdName[FAV_COUNT][16], _wcFavIdLat[FAV_COUNT][16], _wcFavIdLon[FAV_COUNT][16];
+static char _wcFavLbName[FAV_COUNT][28], _wcFavLbLat[FAV_COUNT][28], _wcFavLbLon[FAV_COUNT][28];
+
+// Push the current in-memory values into the form fields, so the page always
+// opens showing what the device actually holds — including changes made on the
+// device itself (Set location, favourites) since boot.
+static void wcRefreshFields() {
+    if (!_wcActive) return;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.6f", _homeLat); _wcLat->setValue(buf, 15);
+    snprintf(buf, sizeof(buf), "%.6f", _homeLon); _wcLon->setValue(buf, 15);
+    for (int i = 0; i < FAV_COUNT; i++) {
+        _wcFavName[i]->setValue(_favName[i], 23);
+        snprintf(buf, sizeof(buf), "%.6f", _favLat[i]); _wcFavLat[i]->setValue(buf, 15);
+        snprintf(buf, sizeof(buf), "%.6f", _favLon[i]); _wcFavLon[i]->setValue(buf, 15);
+    }
+}
+
+static void wcSave() {
+    Preferences prefs;
+    prefs.begin("flightdial", /*readOnly=*/false);
+
+    const char* placeVal = _wcPlace->getValue();
+    if (placeVal[0]) {
+        // Resolved in webConfigLoop(): geocoding blocks for seconds, and this
+        // runs inside the web server's request handler.
+        strncpy(_pendingPlace, placeVal, sizeof(_pendingPlace) - 1);
+        _pendingPlace[sizeof(_pendingPlace) - 1] = '\0';
+        _wcPlace->setValue("", 48);        // one-shot field; don't re-apply on next save
+    } else {
+        float lat = atof(_wcLat->getValue());
+        float lon = atof(_wcLon->getValue());
+        bool valid = (lat >= -90.0f && lat <= 90.0f) &&
+                     (lon >= -180.0f && lon <= 180.0f) && !(lat == 0.0f && lon == 0.0f);
+        if (valid) {
+            _homeLat = lat; _homeLon = lon; _homeSet = true;
+            prefs.putFloat("home_lat", _homeLat);
+            prefs.putFloat("home_lon", _homeLon);
+            prefs.putBool("home_set", true);
+        } else {
+            Serial.println("[WebConfig] Invalid home lat/lon, keeping previous value");
+        }
+    }
+
+    for (int i = 0; i < FAV_COUNT; i++) {
+        const char* fname = _wcFavName[i]->getValue();
+        float flat = atof(_wcFavLat[i]->getValue());
+        float flon = atof(_wcFavLon[i]->getValue());
+        bool fvalid = (flat >= -90.0f && flat <= 90.0f) && (flon >= -180.0f && flon <= 180.0f);
+        if (fname[0] == '\0' || !fvalid) {
+            _favName[i][0] = '\0'; _favLat[i] = 0.0f; _favLon[i] = 0.0f;
+        } else {
+            strncpy(_favName[i], fname, sizeof(_favName[i]) - 1);
+            _favLat[i] = flat; _favLon[i] = flon;
+        }
+        char key[16];
+        snprintf(key, sizeof(key), "fav%d_name", i); prefs.putString(key, _favName[i]);
+        snprintf(key, sizeof(key), "fav%d_lat",  i); prefs.putFloat (key, _favLat[i]);
+        snprintf(key, sizeof(key), "fav%d_lon",  i); prefs.putFloat (key, _favLon[i]);
+    }
+    prefs.end();
+    _wcApplyPending = true;
+    Serial.println("[WebConfig] settings saved");
+}
+
+void startWebConfig() {
+    if (_wcActive || WiFi.status() != WL_CONNECTED) return;
+
+    char latStr[16], lonStr[16];
+    snprintf(latStr, sizeof(latStr), "%.6f", _homeLat);
+    snprintf(lonStr, sizeof(lonStr), "%.6f", _homeLon);
+
+    // Raw-HTML pseudo-parameter: heads the Setup page so it explains itself,
+    // rather than presenting bare fields under WiFiManager's generic title.
+    static WiFiManagerParameter heading(
+        "<h3>Home location &amp; favourites</h3>"
+        "<p style='opacity:.75'>Saved straight to the device &mdash; no restart needed. "
+        "Leave a favourite's name blank to clear that slot.</p>");
+    _wcPlace = new WiFiManagerParameter(
+        "place", "Place name (e.g. Berlin) - overrides the coordinates below", "", 48);
+    _wcLat = new WiFiManagerParameter("home_lat", "Home latitude",  latStr, 15);
+    _wcLon = new WiFiManagerParameter("home_lon", "Home longitude", lonStr, 15);
+
+    _wcWm = new WiFiManager();
+    _wcWm->addParameter(&heading);
+    _wcWm->addParameter(_wcPlace);
+    _wcWm->addParameter(_wcLat);
+    _wcWm->addParameter(_wcLon);
+    for (int i = 0; i < FAV_COUNT; i++) {
+        char v[16];
+        snprintf(_wcFavIdName[i], sizeof(_wcFavIdName[i]), "fav%d_name", i);
+        snprintf(_wcFavIdLat [i], sizeof(_wcFavIdLat [i]), "fav%d_lat",  i);
+        snprintf(_wcFavIdLon [i], sizeof(_wcFavIdLon [i]), "fav%d_lon",  i);
+        snprintf(_wcFavLbName[i], sizeof(_wcFavLbName[i]), "Favourite %d name (blank clears)", i + 1);
+        snprintf(_wcFavLbLat [i], sizeof(_wcFavLbLat [i]), "Favourite %d latitude",  i + 1);
+        snprintf(_wcFavLbLon [i], sizeof(_wcFavLbLon [i]), "Favourite %d longitude", i + 1);
+        _wcFavName[i] = new WiFiManagerParameter(_wcFavIdName[i], _wcFavLbName[i], _favName[i], 23);
+        snprintf(v, sizeof(v), "%.6f", _favLat[i]);
+        _wcFavLat[i]  = new WiFiManagerParameter(_wcFavIdLat[i],  _wcFavLbLat[i],  v, 15);
+        snprintf(v, sizeof(v), "%.6f", _favLon[i]);
+        _wcFavLon[i]  = new WiFiManagerParameter(_wcFavIdLon[i],  _wcFavLbLon[i],  v, 15);
+        _wcWm->addParameter(_wcFavName[i]);
+        _wcWm->addParameter(_wcFavLat[i]);
+        _wcWm->addParameter(_wcFavLon[i]);
+    }
+
+    // Product branding, and a menu that leads with the settings the user
+    // actually came for. "Configure WiFi" led the default menu even though
+    // location is what this page is mostly used for.
+    _wcWm->setTitle(PRODUCT_NAME);
+    _wcWm->setHostname(WC_HOSTNAME);   // also what the page subtitle shows
+    static const char* menu[] = { "param", "wifi", "info", "sep", "restart" };
+    _wcWm->setMenu(menu, 5);
+    _wcWm->setCustomHeadElement(
+        "<style>"
+        "body{background:#111;color:#eee}"
+        "button,input[type=submit]{background:#0a7;border:0}"
+        "a,h1,h3{color:#0c8}"
+        ".msg{border-color:#0a7}"
+        "</style>");
+
+    _wcWm->setConfigPortalBlocking(false);   // serviced from webConfigLoop()
+    _wcWm->setSaveParamsCallback(wcSave);
+    _wcWm->startWebPortal();
+    _wcActive = true;
+
+    if (MDNS.begin(WC_HOSTNAME)) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.printf("[WebConfig] http://%s.local/\n", WC_HOSTNAME);
+    } else {
+        Serial.println("[WebConfig] mDNS failed — IP only");
+    }
+    snprintf(_wcAddress, sizeof(_wcAddress), "%s.local", WC_HOSTNAME);
+    Serial.printf("[WebConfig] also http://%s/\n", WiFi.localIP().toString().c_str());
+}
+
+const char* webConfigAddress() {
+    return (_wcActive && WiFi.status() == WL_CONNECTED) ? _wcAddress : nullptr;
+}
+
+void webConfigLoop() {
+    if (!_wcActive) return;
+
+    // Throttle the web server poll. ESP32's WebServer::handleClient() calls
+    // delay(1) whenever no client is waiting, so servicing it every iteration
+    // pinned the whole loop at ~1 kHz. That is still responsive, but it spends
+    // a millisecond of every pass idling for no reason. Polling at ~200 Hz is
+    // far more than a config page needs and leaves the loop free otherwise.
+    static unsigned long lastProcessMs = 0;
+    unsigned long now = millis();
+    if (now - lastProcessMs < 5) return;
+    lastProcessMs = now;
+
+    _wcWm->process();
+
+    if (!_wcApplyPending) return;
+    _wcApplyPending = false;
+
+    // A typed place name geocodes here rather than in the request handler —
+    // it blocks for seconds and would stall the web server mid-response.
+    if (_pendingPlace[0]) {
+        float glat, glon; char place[48] = "";
+        showConnectingScreen();
+        if (geocodeCity(_pendingPlace, glat, glon, place, sizeof(place))) {
+            setHomeLocation(glat, glon);
+            Serial.printf("[WebConfig] '%s' -> %.4f,%.4f\n", _pendingPlace, glat, glon);
+        } else {
+            Serial.printf("[WebConfig] could not geocode '%s'\n", _pendingPlace);
+        }
+        _pendingPlace[0] = '\0';
+    }
+    wcRefreshFields();
+    if (mapMode() == MAP_FULL) mapLayer.precacheAll(_homeLat, _homeLon);
 }

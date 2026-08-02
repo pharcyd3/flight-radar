@@ -518,6 +518,7 @@ void setup() {
     aircraft.reserve(MAX_AIRCRAFT);
 
     feed::begin();       // background fetch task — the UI never blocks on network
+    startWebConfig();    // always-on config page at http://flightradar.local
     startFetch();        // first poll; the loop picks up the result when it lands
 
     lastFetchMs = millis();
@@ -543,6 +544,7 @@ void loop() {
     M5Dial.update();
     checkResetCombo();
     checkSerialCommands();
+    webConfigLoop();     // serve the web config page a slice at a time
 
     // Screenshot freeze: hold the current posed frame (no fetch/redraw/input) so
     // it can be captured deterministically. Serial commands are still processed

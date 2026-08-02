@@ -56,5 +56,6 @@ Once connected, Frank's Flight Radar starts polling [airplanes.live](https://air
 
 ## Resetting later
 
-- **Change WiFi/location only**: open the on-device Settings menu (short-press the encoder button) → **Location & Favourites**. This re-opens the same captive portal without erasing anything else.
+- **Change location/favourites**: browse to **`http://flightradar.local`** from any device on the same network — the page is always available and nothing on the radar is interrupted. Settings → **Web Config** on the device just shows you that address.
+- **Change WiFi network**: same page, **Configure WiFi**. If the device can't reach your network at all, Settings → **Web Config** falls back to the `Franks-Flight-Radar-Setup` captive portal.
 - **Full factory reset**: hold the encoder button down for 3 seconds. This wipes WiFi credentials, home location, and saved favourites, then reboots into first-boot setup. The same reset is also available as a menu item under **Settings → Factory Reset** (hold-to-confirm, so it can't be triggered by accident).

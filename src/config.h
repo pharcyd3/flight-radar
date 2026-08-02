@@ -5,6 +5,8 @@
 // SETUP_AP_SSID is the WiFi network the setup captive portal broadcasts.
 #define SETUP_AP_SSID  "Franks-Flight-Radar-Setup"
 #define PRODUCT_UA     "FranksFlightRadar/1.0 (ESP32 hobby project)"
+// Shown as the title of the web config page.
+#define PRODUCT_NAME   "Frank's Flight Radar"
 
 // WiFi and home location are configured on first boot via the captive portal
 // (connect to the "Franks-Flight-Radar-Setup" AP, open 192.168.4.1 in a
