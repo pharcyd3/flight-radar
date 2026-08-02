@@ -774,8 +774,13 @@ void RadarDisplay::drawRings(float radiusKm) {
     _g->setTextColor(COL_RING_LBL, COL_BG);
     snprintf(buf, sizeof(buf), "%.0fkm", radiusKm * 0.5f);
     _g->drawString(buf, CX + PLOT_R / 2 + 14, CY);
+    // Outer label sits just INSIDE its ring, right-aligned. Centred at
+    // CX + PLOT_R + 14 it landed at x=239 on a 240 px display, so most of it
+    // was clipped off the edge — and the round bezel cuts in further still.
     snprintf(buf, sizeof(buf), "%.0fkm", radiusKm);
-    _g->drawString(buf, CX + PLOT_R + 14, CY);
+    _g->setTextDatum(MR_DATUM);
+    _g->drawString(buf, CX + PLOT_R - 6, CY);
+    _g->setTextDatum(MC_DATUM);   // restore — the rest of the frame assumes it
 }
 
 // Row of dots near the top of the round display — one per zoom step, with the
@@ -784,7 +789,7 @@ void RadarDisplay::drawRings(float radiusKm) {
 // halo behind it for the same map-contrast reason as the aircraft marks.
 void RadarDisplay::drawZoomDots(int zoomIdx) {
     static constexpr int DOT_Y        = 26;   // just below the "N" tick
-    static constexpr int DOT_GAP      = 14;
+    static constexpr int DOT_GAP      = 11;   // fits ZOOM_COUNT dots clear of the battery gauge
     static constexpr int DOT_R        = 3;
     static constexpr int DOT_R_ACTIVE = 4;
 

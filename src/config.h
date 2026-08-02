@@ -22,8 +22,12 @@
 #define DEFAULT_HOME_LON   -0.1f
 
 // ── Zoom levels (km radius) ──────────────────────────────────────────────────
-static const float ZOOM_STEPS[]  = { 10.0f, 25.0f, 50.0f, 100.0f, 200.0f };
-static const int   ZOOM_COUNT    = 5;
+// 400 km is the widest that still fetches everything it shows: the API's radius
+// argument is capped at 250 nm (463 km), and 400 km is 216 nm. A 500 km step
+// would be clipped to the cap, so the outer part of the view would be silently
+// empty of traffic rather than genuinely quiet.
+static const float ZOOM_STEPS[]  = { 10.0f, 25.0f, 50.0f, 100.0f, 200.0f, 400.0f };
+static const int   ZOOM_COUNT    = 6;
 static const int   ZOOM_DEFAULT  = 1;   // start at 25 km
 
 // ── Rotary encoder ────────────────────────────────────────────────────────────

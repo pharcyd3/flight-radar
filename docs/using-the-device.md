@@ -9,6 +9,7 @@ Frank's Flight Radar has three inputs: the **rotary encoder** (twist and press),
 - The **red crosshair** at the centre is your home location.
 - The **background** is one of three styles, set under Settings → Map: a real street map, an offline lo-fi vector map, or a plain scope. See [Settings Reference](settings-reference.md#map) and [Map & Caching](map-caching.md).
 - **Concentric rings** mark 25%, 50%, and 100% of the current zoom radius, with an **N** tick at the top and range labels on the right (toggle these off under Settings → Range rings).
+- At the widest zooms there can be more aircraft in range than the device holds. It keeps the **nearest** ones, so what drops off is always the far horizon rather than something overhead.
 - Aircraft are drawn as dots with a short heading line, coloured by state:
     - White (or your theme's aircraft colour) — normal, airborne
     - Grey — on the ground
@@ -20,7 +21,7 @@ Frank's Flight Radar has three inputs: the **rotary encoder** (twist and press),
 
 ## Rotary encoder: zoom
 
-Rotate the dial to change the radar range. There are five steps: **10, 25, 50, 100, and 200&nbsp;km**. Each click moves exactly one step, and steps register immediately. This hardware's encoder emits occasional spurious single ticks, so the firmware only commits a step once the count has moved a full detent — sub-detent noise is rejected outright rather than waited out, which keeps the dial responsive.
+Rotate the dial to change the radar range. There are six steps: **10, 25, 50, 100, 200, and 400&nbsp;km**. Each click moves exactly one step, and steps register immediately. This hardware's encoder emits occasional spurious single ticks, so the firmware only commits a step once the count has moved a full detent — sub-detent noise is rejected outright rather than waited out, which keeps the dial responsive.
 
 The rings, scale and map redraw instantly. Fetching fresh traffic for the new radius is deferred briefly, so spinning through several levels makes one request rather than one per level — and because fetches run off the UI thread, none of it delays the dial.
 

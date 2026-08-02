@@ -193,14 +193,26 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
 
     JsonDocument elem;
     DeserializationError err{};
-    // Keep scanning past the cap only while still hunting for keepIcao — see
-    // the header note. Once it's found (or was never wanted) we stop, so the
-    // common case costs nothing.
     const bool wantKeep = (keepIcao && keepIcao[0]);
     bool       gotKeep  = false;
 
+    // Once at the cap, keep the *nearest* aircraft rather than whichever
+    // happened to arrive first. The response has no useful ordering, so at the
+    // widest zoom (400 km can return well over 100 aircraft against a cap of
+    // MAX_AIRCRAFT) first-come would show an arbitrary subset, with the ones
+    // dropped just as likely to be overhead as on the far horizon.
+    //
+    // Planar, not great-circle: only the *ranking* matters here, and over a few
+    // hundred km the two agree on order. Scanning the whole response costs a
+    // little more parse time, but that runs on the fetch task, not the UI.
+    const float cosLat = cosf(centerLat * (float)M_PI / 180.0f);
+    auto dist2 = [&](float lat, float lon) {
+        float dy = lat - centerLat;
+        float dx = (lon - centerLon) * cosLat;
+        return dx * dx + dy * dy;
+    };
+
     while (true) {
-        if ((int)out.size() >= MAX_AIRCRAFT && (!wantKeep || gotKeep)) break;
         do {
             c = rf.peek();
             if (c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r') rf.read();
@@ -252,18 +264,28 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
         float age  = elem["seen_pos"].isNull() ? 0.0f : elem["seen_pos"].as<float>();
         ac.posAgeS = age < 0.0f ? 0.0f : (age > 60.0f ? 60.0f : age);
 
+        const bool isKeep = wantKeep && !gotKeep &&
+                            strncmp(ac.icao24, keepIcao, sizeof(ac.icao24)) == 0;
+
         if ((int)out.size() < MAX_AIRCRAFT) {
             out.push_back(ac);
-            if (wantKeep && strncmp(ac.icao24, keepIcao, sizeof(ac.icao24)) == 0)
-                gotKeep = true;
-        } else if (wantKeep && !gotKeep &&
-                   strncmp(ac.icao24, keepIcao, sizeof(ac.icao24)) == 0) {
-            // Past the cap and this is the tracked aircraft: displace the last
-            // one parsed. Which arbitrary aircraft we drop doesn't matter; the
-            // one being followed does.
-            out.back() = ac;
-            gotKeep    = true;
-            break;
+            if (isKeep) gotKeep = true;
+            continue;
+        }
+
+        // At the cap: displace the farthest aircraft held, but never the
+        // followed one — it must survive regardless of how far out it drifts.
+        int   worst = -1;
+        float worstD = -1.0f;
+        for (int k = 0; k < (int)out.size(); ++k) {
+            if (wantKeep && strncmp(out[k].icao24, keepIcao, sizeof(out[k].icao24)) == 0)
+                continue;
+            float d = dist2(out[k].lat, out[k].lon);
+            if (d > worstD) { worstD = d; worst = k; }
+        }
+        if (worst >= 0 && (isKeep || dist2(ac.lat, ac.lon) < worstD)) {
+            out[worst] = ac;
+            if (isKeep) gotKeep = true;
         }
     }
     rf.close();

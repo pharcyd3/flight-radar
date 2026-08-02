@@ -5,7 +5,8 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 ## Live radar display
 
 - **Real ADS-B traffic** from [airplanes.live](https://airplanes.live/)'s free community network, plotted by position around a home location you choose.
-- **Five zoom ranges** — 10, 25, 50, 100, and 200&nbsp;km radius, selected with the rotary encoder. A row of dots near the top shows the current level at a glance.
+- **Six zoom ranges** — 10, 25, 50, 100, 200, and 400&nbsp;km radius, selected with the rotary encoder. A row of dots near the top shows the current level at a glance. 400&nbsp;km is the widest that still fetches everything it displays: the data API caps its radius at 250&nbsp;nm, so a wider step would show an outer band that merely *looked* empty.
+- **Nearest-first** — when more aircraft are in range than the device can hold, it keeps the closest ones rather than whichever arrived first in the response.
 - **Smooth motion (dead reckoning)** — between polls, airborne aircraft *glide* along their heading at their reported ground speed instead of jumping on each refresh. Position is extrapolated for up to two minutes, so a missed poll never flings a stale mark across the screen.
 - **Heading arrows** — moving aircraft show a short arrow in their direction of travel.
 - **Position trails** — the selected aircraft leaves a fading breadcrumb trail of its recent reported positions. (Shares the **Heading trails** setting.)
