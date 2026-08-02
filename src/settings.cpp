@@ -255,6 +255,56 @@ static const MenuItem MENU_ITEMS[] = {
 };
 static const int MENU_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 
+// ── Web-config access ─────────────────────────────────────────────────────────
+// Projects the Cycle rows of MENU_ITEMS, so the web page and the on-device menu
+// are literally the same list. Indices are positional and only need to stay
+// stable between rendering a form and receiving it back, which they do.
+
+static int cycleRowIndex(int nth) {
+    int seen = 0;
+    for (int i = 0; i < (int)(sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0])); i++) {
+        if (MENU_ITEMS[i].kind != ItemKind::Cycle) continue;
+        if (seen++ == nth) return i;
+    }
+    return -1;
+}
+
+int settingsCycleCount() {
+    int n = 0;
+    for (int i = 0; i < (int)(sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0])); i++)
+        if (MENU_ITEMS[i].kind == ItemKind::Cycle) n++;
+    return n;
+}
+
+const char* settingsCycleLabel(int i) {
+    int r = cycleRowIndex(i);
+    return (r < 0) ? "" : MENU_ITEMS[r].label;
+}
+
+int settingsCycleValue(int i) {
+    int r = cycleRowIndex(i);
+    return (r < 0) ? 0 : *MENU_ITEMS[r].value;
+}
+
+int settingsCycleOptionCount(int i) {
+    int r = cycleRowIndex(i);
+    return (r < 0) ? 0 : MENU_ITEMS[r].optionCount;
+}
+
+const char* settingsCycleOption(int i, int opt) {
+    int r = cycleRowIndex(i);
+    if (r < 0 || opt < 0 || opt >= MENU_ITEMS[r].optionCount) return "";
+    return MENU_ITEMS[r].options[opt];
+}
+
+void settingsApplyCycle(int i, int value) {
+    int r = cycleRowIndex(i);
+    if (r < 0 || value < 0 || value >= MENU_ITEMS[r].optionCount) return;
+    if (*MENU_ITEMS[r].value == (uint8_t)value) return;
+    *MENU_ITEMS[r].value = (uint8_t)value;
+    saveSettings();
+}
+
 // Rows per page — 3 fits the panel height alongside its title and hint line.
 static const int MENU_PAGE_SIZE = 3;
 

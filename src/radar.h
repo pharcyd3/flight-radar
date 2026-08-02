@@ -60,6 +60,22 @@ public:
                    const char* label, bool hideOthers,
                    float targetLat, float targetLon);
 
+    // Chase-view signal state: whether the tracked aircraft has gone unseen
+    // long enough to warn about, and for how long. Drawn as a small notice so
+    // a frozen-looking mark reads as "coasting on dead reckoning" rather than
+    // "the radar has hung".
+    void setFollowSignal(bool lost, unsigned long secsLost) {
+        _followLost     = lost;
+        _followLostSecs = secsLost;
+    }
+
+    // True when the view has been dragged away from its natural centre, in
+    // either mode — drives the recentre icon.
+    void setViewPanned(bool panned) { _viewPanned = panned; }
+
+    // True when a tap lands on the recentre icon.
+    bool hitRecenterIcon(int tx, int ty) const;
+
     // Index of the aircraft with this icao24, or -1 if it isn't in the set.
     int findByIcao(const std::vector<Aircraft>& aircraft, const char* icao) const;
 
@@ -190,6 +206,7 @@ private:
     // plain tap anywhere off the UNFOLLOW/HIDE-OTHERS buttons already resets
     // the pan — this only makes that affordance visible.
     void drawRecenterIcon();
+    void drawSignalLostNotice();
     void drawPollIcon(unsigned long lastUpdateMs, bool fetching);
     void drawApiStatusOverlay();
 
@@ -212,7 +229,10 @@ private:
     char  _followLabel[12]  = "";
     float _followTargetLat  = 0.0f;   // tracked aircraft's true position, for the
     float _followTargetLon  = 0.0f;   // reticle when the view is panned away from it
-    bool  _showRecenter     = false;  // true when the follow-pan view center is off-target
+    bool  _showRecenter     = false;  // true when the view is panned off centre
+    bool  _viewPanned       = false;  // set by main.cpp; pan applies in both modes
+    bool  _followLost       = false;
+    unsigned long _followLostSecs = 0;
 
     bool _showStatus = false;
 

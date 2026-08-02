@@ -126,6 +126,11 @@ static const float INTERP_MAX_S        = 120.0f;  // cap extrapolation at 2 min
 // aircraft is picked up again on a later poll.
 static const float FOLLOW_DR_MAX_S = 1800.0f;     // 30 min of fetch-box coasting
 
+// How long the tracked aircraft must go unseen before the chase view says so.
+// Longer than a couple of poll intervals, so an ordinary single missed poll
+// doesn't flash a warning up and straight back down again.
+static const unsigned long FOLLOW_LOST_NOTICE_MS = 20000UL;
+
 // ── Position trails ─────────────────────────────────────────────────────────────
 // Breadcrumb history for the *selected* aircraft: the last few reported positions,
 // drawn as a fading polyline. Only the selected aircraft's trail is ever drawn,

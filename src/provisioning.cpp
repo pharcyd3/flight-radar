@@ -486,6 +486,33 @@ static const char WC_HOSTNAME[] = "flightradar";
 static char _wcFavIdName[FAV_COUNT][16], _wcFavIdLat[FAV_COUNT][16], _wcFavIdLon[FAV_COUNT][16];
 static char _wcFavLbName[FAV_COUNT][28], _wcFavLbLat[FAV_COUNT][28], _wcFavLbLon[FAV_COUNT][28];
 
+// Display settings are rendered as <select> dropdowns built from the same list
+// the on-device menu uses (settingsCycle* in settings.h). WiFiManagerParameter
+// takes a bare pointer to this buffer, so it must be a fixed address that we
+// rewrite in place rather than a String that could reallocate.
+static char _wcCfgHtml[4096];
+static WiFiManagerParameter* _wcCfg = nullptr;
+
+static void wcBuildSettingsHtml() {
+    int n = settingsCycleCount();
+    size_t w = 0;
+    w += snprintf(_wcCfgHtml + w, sizeof(_wcCfgHtml) - w,
+                  "<h3>Display &amp; behaviour</h3>");
+    for (int i = 0; i < n && w < sizeof(_wcCfgHtml) - 256; i++) {
+        w += snprintf(_wcCfgHtml + w, sizeof(_wcCfgHtml) - w,
+                      "<br/><label for='cfg%d'>%s</label>"
+                      "<select id='cfg%d' name='cfg%d' style='width:100%%'>",
+                      i, settingsCycleLabel(i), i, i);
+        int cur = settingsCycleValue(i);
+        for (int o = 0; o < settingsCycleOptionCount(i) && w < sizeof(_wcCfgHtml) - 96; o++) {
+            w += snprintf(_wcCfgHtml + w, sizeof(_wcCfgHtml) - w,
+                          "<option value='%d'%s>%s</option>",
+                          o, (o == cur ? " selected" : ""), settingsCycleOption(i, o));
+        }
+        w += snprintf(_wcCfgHtml + w, sizeof(_wcCfgHtml) - w, "</select>");
+    }
+}
+
 // Push the current in-memory values into the form fields, so the page always
 // opens showing what the device actually holds — including changes made on the
 // device itself (Set location, favourites) since boot.
@@ -544,6 +571,17 @@ static void wcSave() {
         snprintf(key, sizeof(key), "fav%d_lon",  i); prefs.putFloat (key, _favLon[i]);
     }
     prefs.end();
+
+    // The display settings are raw <select> fields rather than
+    // WiFiManagerParameters, so WiFiManager doesn't collect them — read them
+    // off the request directly. Absent fields are simply left alone.
+    for (int i = 0; i < settingsCycleCount(); i++) {
+        char id[12];
+        snprintf(id, sizeof(id), "cfg%d", i);
+        if (_wcWm->server->hasArg(id))
+            settingsApplyCycle(i, _wcWm->server->arg(id).toInt());
+    }
+
     _wcApplyPending = true;
     Serial.println("[WebConfig] settings saved");
 }
@@ -567,6 +605,8 @@ void startWebConfig() {
     _wcLon = new WiFiManagerParameter("home_lon", "Home longitude", lonStr, 15);
 
     _wcWm = new WiFiManager();
+    wcBuildSettingsHtml();
+    _wcCfg = new WiFiManagerParameter(_wcCfgHtml);
     _wcWm->addParameter(&heading);
     _wcWm->addParameter(_wcPlace);
     _wcWm->addParameter(_wcLat);
@@ -588,6 +628,7 @@ void startWebConfig() {
         _wcWm->addParameter(_wcFavLat[i]);
         _wcWm->addParameter(_wcFavLon[i]);
     }
+    _wcWm->addParameter(_wcCfg);
 
     // Product branding, and a menu that leads with the settings the user
     // actually came for. "Configure WiFi" led the default menu even though
@@ -602,7 +643,13 @@ void startWebConfig() {
         "button,input[type=submit]{background:#0a7;border:0}"
         "a,h1,h3{color:#0c8}"
         ".msg{border-color:#0a7}"
-        "</style>");
+        "</style>"
+        // The params page button is labelled "Setup" by a PROGMEM string inside
+        // WiFiManager; renaming it there would be lost on any library update, so
+        // relabel it in the page instead.
+        "<script>addEventListener('DOMContentLoaded',function(){"
+        "document.querySelectorAll(\"form[action='/param'] button\")"
+        ".forEach(function(b){b.textContent='Config';});});</script>");
 
     _wcWm->setConfigPortalBlocking(false);   // serviced from webConfigLoop()
     _wcWm->setSaveParamsCallback(wcSave);
@@ -655,5 +702,6 @@ void webConfigLoop() {
         _pendingPlace[0] = '\0';
     }
     wcRefreshFields();
+    wcBuildSettingsHtml();   // reflect the new values next time the page opens
     if (mapMode() == MAP_FULL) mapLayer.precacheAll(_homeLat, _homeLon);
 }

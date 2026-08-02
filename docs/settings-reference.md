@@ -138,9 +138,17 @@ http://flightradar.local
 
 (plus the raw IP, in case your network doesn't do mDNS name resolution).
 
-Open it from any browser on the same network to set your **home location** — by place name, by coordinates, or blank to auto-detect — and to name and edit your three [favourite locations](favourite-locations.md). Changes save straight to the device; no restart, and the radar keeps running the whole time.
+Open it from any browser on the same network. The **Config** page holds everything you can customise:
 
-The page leads with **Setup** (location and favourites), with **Configure WiFi** alongside it for changing networks.
+- **Home location** — by place name, by coordinates, or blank to auto-detect
+- **Favourite locations** — name and edit all three ([more](favourite-locations.md))
+- **Display & behaviour** — every option on this page (flight labels, colour theme, units, traffic filter, min altitude, heading trails, range rings, map, refresh rate, emergency buzzer, aircraft icon) as dropdowns
+
+The dropdowns are generated from the same list the on-device menu uses, so the two can never drift apart, and they always open showing what the device currently holds — including changes you made on the dial itself.
+
+**Configure WiFi** is a separate page and deals only with network credentials.
+
+Changes save straight to the device; no restart, and the radar keeps running the whole time.
 
 If the device isn't on WiFi there's nothing to point you at, so this falls back to the old captive-portal AP (`Franks-Flight-Radar-Setup` / `192.168.4.1`) — which is also the only way to enter credentials for a new network. See [Getting Started](getting-started.md).
 

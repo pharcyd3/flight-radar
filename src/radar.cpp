@@ -313,6 +313,7 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         // underneath them.
         _showRecenter = (tx != CX || ty != CY);
     } else {
+        _showRecenter = _viewPanned;
         // Home crosshair at centre
         _g->drawLine(CX - 6, CY, CX + 6, CY, COL_HOME);
         _g->drawLine(CX, CY - 6, CX, CY + 6, COL_HOME);
@@ -350,13 +351,17 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
 
     if (_showStatus) {
         drawApiStatusOverlay();          // status panel takes precedence
-    } else if (_following) {
-        drawUnfollowBar();               // chase view controls
-        drawOthersButton();
+    } else {
+        if (_following) {
+            drawUnfollowBar();           // chase view controls
+            drawOthersButton();
+            if (_followLost) drawSignalLostNotice();
+        } else if (selectedIdx >= 0 && selectedIdx < (int)aircraft.size()) {
+            drawDetail(aircraft[selectedIdx]);
+            drawFollowButton();          // FOLLOW control above the detail pill
+        }
+        // Panning works in both modes, so the recentre affordance does too.
         if (_showRecenter) drawRecenterIcon();
-    } else if (selectedIdx >= 0 && selectedIdx < (int)aircraft.size()) {
-        drawDetail(aircraft[selectedIdx]);
-        drawFollowButton();              // FOLLOW control above the detail pill
     }
 
     if (useSprite) mapLayer.pushScene();
@@ -974,6 +979,27 @@ void RadarDisplay::drawReticleGlyph(int x, int y, uint16_t col) {
     _g->drawLine(x + 5, y, x + 12, y, col);
     _g->drawLine(x, y - 12, x, y - 5, col);
     _g->drawLine(x, y + 5, x, y + 12, col);
+}
+
+bool RadarDisplay::hitRecenterIcon(int tx, int ty) const {
+    int dx = tx - RCTR_X, dy = ty - RCTR_Y;
+    return (dx * dx + dy * dy) <= (20 * 20);   // generous, like the poll icon
+}
+
+// "No signal" pill, sat just above the UNFOLLOW bar and clear of the centre
+// reticle. Counts up so it's obvious the view is coasting and roughly how long
+// it has been doing so.
+void RadarDisplay::drawSignalLostNotice() {
+    const int w = 132, h = 18, x = CX - w / 2, y = 172;
+    _g->fillRoundRect(x, y, w, h, 4, COL_OVERLAY);
+    _g->drawRoundRect(x, y, w, h, 4, COL_HOME);
+    _g->setTextDatum(MC_DATUM);
+    _g->setTextSize(1);
+    _g->setTextColor(COL_HOME, COL_OVERLAY);
+    char buf[32];
+    unsigned long m = _followLostSecs / 60, sec = _followLostSecs % 60;
+    snprintf(buf, sizeof(buf), "NO SIGNAL  %lu:%02lu", m, sec);
+    _g->drawString(buf, CX, y + h / 2);
 }
 
 void RadarDisplay::drawRecenterIcon() {

@@ -57,5 +57,17 @@ int mapMode();
 // serial hooks to pose the device without going through the settings menu.
 void setMapMode(int m);
 
+// ── Web-config access ─────────────────────────────────────────────────────────
+// The same cycle options the on-device menu shows, exposed generically so the
+// web page can render them from one source of truth instead of a second
+// hand-written list that would quietly drift out of sync.
+int         settingsCycleCount();
+const char* settingsCycleLabel(int i);
+int         settingsCycleValue(int i);
+int         settingsCycleOptionCount(int i);
+const char* settingsCycleOption(int i, int opt);
+// Applies and persists. Out-of-range values are ignored.
+void        settingsApplyCycle(int i, int value);
+
 // Auto-refresh interval, driven by the user-selectable "Refresh rate" setting.
 unsigned long refreshIntervalMs();

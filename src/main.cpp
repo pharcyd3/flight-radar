@@ -79,10 +79,10 @@ static bool          followHaveLastAc = false;
 // tracked aircraft for an uncluttered chase.
 static bool  followHideOthers = false;
 
-// Follow-mode pan: dragging shifts the DISPLAY view away from being centred
-// exactly on the plane (the plane's true tracked position, used for fetching
-// and the reticle, is unaffected) — lets you look around, e.g. to see an
-// airport that's otherwise hidden behind the HIDE OTHERS / UNFOLLOW buttons.
+// View pan: dragging shifts the DISPLAY away from its natural centre — the
+// tracked aircraft while following, home otherwise. What the view is centred
+// *on* for fetching (and the follow reticle) is unaffected, so panning is
+// purely a look-around and never moves the search box or your home location.
 // Stored as a screen-pixel offset (not lat/lon) so a fixed on-screen drag
 // distance feels the same regardless of the current zoom, and re-projected to
 // a world offset at render time using the current radius. Clamped so the
@@ -116,9 +116,9 @@ static float displayRadiusKm() {
 // (the plane's true position) unaffected — only what's drawn shifts.
 static void followPanDeltaLatLon(float& dLat, float& dLon) {
     dLat = dLon = 0.0f;
-    if (!following || (followPanPxX == 0 && followPanPxY == 0)) return;
+    if (followPanPxX == 0 && followPanPxY == 0) return;
     float kmPerPx = displayRadiusKm() / 105.0f;   // PLOT_R
-    float cl = cosf(followCenterLat * (float)M_PI / 180.0f);
+    float cl = cosf(viewLat() * (float)M_PI / 180.0f);
     if (cl < 0.05f) cl = 0.05f;
     dLat = (followPanPxY * kmPerPx) / 111.0f;
     dLon = -(followPanPxX * kmPerPx) / (111.0f * cl);
@@ -142,6 +142,11 @@ static const char* followLabel() {
 static void redraw() {
     radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers,
                     followCenterLat, followCenterLon);
+    radar.setViewPanned(followPanPxX != 0 || followPanPxY != 0);
+    // Tell the chase view when the target has been unseen long enough to be
+    // worth saying so, rather than leaving a coasting mark looking like a hang.
+    unsigned long lostMs = following ? (millis() - followLastSeenMs) : 0;
+    radar.setFollowSignal(following && lostMs > FOLLOW_LOST_NOTICE_MS, lostMs / 1000);
     radar.draw(aircraft, displayCenterLat(), displayCenterLon(), displayRadiusKm(), zoomIdx,
                selectedAc, lastUpdateMs, feed::busy());
 }
@@ -577,8 +582,8 @@ void loop() {
             float r   = displayRadiusKm();
             int   dir = zoomDelta > 0 ? 1 : -1;
             for (int k = 0; k < abs(zoomDelta); ++k) {
-                int nx = radar.nextSelectable(selectedAc, dir,
-                                              aircraft, viewLat(), viewLon(), r);
+                int nx = radar.nextSelectable(selectedAc, dir, aircraft,
+                                              displayCenterLat(), displayCenterLon(), r);
                 if (nx < 0) break;   // nothing selectable
                 selectedAc = nx;
             }
@@ -664,30 +669,57 @@ void loop() {
         }
     } else if (touch.wasPressed()) {
         lastInteractionMs = millis();
+        followTouchDownX = touch.x; followTouchDownY = touch.y;
+        followTouchLastX = touch.x; followTouchLastY = touch.y;
+        followTouchDragged = false;
+    } else if (touch.isPressed()) {
+        // Drag to look around, exactly as in follow mode.
+        int dx = touch.x - followTouchLastX, dy = touch.y - followTouchLastY;
+        if (dx != 0 || dy != 0) {
+            followPanPxX += dx;
+            followPanPxY += dy;
+            float mag = sqrtf((float)followPanPxX * followPanPxX +
+                              (float)followPanPxY * followPanPxY);
+            if (mag > FOLLOW_PAN_MAX_PX) {
+                float scale = FOLLOW_PAN_MAX_PX / mag;
+                followPanPxX = (int)(followPanPxX * scale);
+                followPanPxY = (int)(followPanPxY * scale);
+            }
+            // Only count it as a drag once it's clearly past finger jitter,
+            // or an ordinary tap would stop selecting aircraft.
+            int tdx = touch.x - followTouchDownX, tdy = touch.y - followTouchDownY;
+            if (tdx * tdx + tdy * tdy > 36) followTouchDragged = true;
+            lastInteractionMs = millis();
+            static unsigned long lastDragDrawMs = 0;
+            unsigned long tnow = millis();
+            if (tnow - lastDragDrawMs >= 80UL) { lastDragDrawMs = tnow; redraw(); }
+        }
+        followTouchLastX = touch.x; followTouchLastY = touch.y;
+    } else if (touch.wasReleased() && !followTouchDragged) {
+        // Hit-test the press-down position, for the same reason follow mode
+        // does: the tracked position drifts during an ordinary tap.
+        const int tx = followTouchDownX, ty = followTouchDownY;
         float r = displayRadiusKm();
-        if (radar.hitPollIcon(touch.x, touch.y)) {
+        if (radar.hitRecenterIcon(tx, ty) && (followPanPxX || followPanPxY)) {
+            resetFollowPan();
+        } else if (radar.hitPollIcon(tx, ty)) {
             // Tap the poll icon to toggle the API status panel
             radar.setStatusVisible(!radar.statusVisible());
             selectedAc = -1;
         } else if (selectedAc >= 0 && !radar.statusVisible() &&
-                   radar.hitFollowButton(touch.x, touch.y)) {
+                   radar.hitFollowButton(tx, ty)) {
             // FOLLOW button in the detail panel starts tracking (and hides the panel).
             startFollow(selectedAc);
-            // This same physical touch is still down and will report isPressed()/
-            // wasReleased() on later loop iterations, now routed to the follow
-            // touch handler above — which never saw its wasPressed() edge, so
-            // its drag-gesture state (last X/Y, on-button, dragged) would
-            // otherwise be stale leftovers from whatever was touched last.
-            // Priming it here as "already on a button, not dragging" makes that
-            // leftover release a no-op instead of a bogus jump or a phantom hit
-            // on UNFOLLOW/HIDE OTHERS.
-            followTouchDownX = touch.x; followTouchDownY = touch.y;
-            followTouchLastX = touch.x; followTouchLastY = touch.y;
+            // Prime the follow handler's gesture state: this same physical
+            // touch is already down, so it will never see a wasPressed() edge.
             followTouchOnButton = true;
             followTouchDragged  = false;
         } else {
             radar.setStatusVisible(false);   // any other tap dismisses the panel
-            int hit = radar.hitTest(touch.x, touch.y, aircraft, viewLat(), viewLon(), r);
+            // Hit-test against what's actually drawn, which is the panned
+            // centre — not the unpanned one the fetch uses.
+            int hit = radar.hitTest(tx, ty, aircraft,
+                                    displayCenterLat(), displayCenterLon(), r);
             selectedAc = (hit == selectedAc) ? -1 : hit;  // tap again to deselect
         }
         // Immediate redraw after touch so it feels responsive

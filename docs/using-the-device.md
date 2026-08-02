@@ -49,8 +49,17 @@ The radar re-centres on that aircraft and tracks it: a **reticle** marks the tra
 - The **rotary dial zooms** while following (the selection is locked onto your target).
 - **HIDE OTHERS** (top button) drops all the other traffic so only your target and the map remain; tap it again (**SHOW OTHERS**) to bring them back.
 - **Drag anywhere** to pan the view around the tracked aircraft — useful when a button is covering something you want to see. While panned, a small **reticle icon** appears on the right edge as a reminder; a plain tap (no drag) snaps back to centred.
+- If the aircraft stops being seen, a red **NO SIGNAL** notice appears with a counter showing how long it's been out of contact. The view keeps coasting along its last known heading meanwhile, so a still-looking mark reads as "dead reckoning" rather than a frozen device. Follow ends if it stays unseen for 20 minutes.
 - With the **Full** map, the background **re-centres lazily** — it stays put while the aircraft drifts within view, then snaps to re-centre once it wanders far enough, briefly reloading the map there. On the **Lo-fi** or **Off** background this is instant with no reload, so following feels smoothest there.
 - Follow is a **locked mode** — ordinary taps do not back out of it. It ends when you tap **UNFOLLOW**, or when the aircraft has not been seen for 20 minutes (it has landed, or left ADS-B coverage). Through shorter gaps the view keeps coasting along the aircraft's last known heading and re-acquires it when it reappears.
+
+## Touch: drag to look around
+
+**Drag anywhere on the radar** to shift the view off centre — handy for seeing what's behind the detail panel, or just looking further one way. A **reticle icon** appears on the right edge while the view is off centre; tap it to snap back.
+
+Panning only moves what's *drawn*. Your home location and the area being searched for aircraft don't change, and the drag is limited so you can't lose the centre entirely.
+
+Tapping still selects aircraft as normal — only a deliberate drag pans, so a slightly imprecise tap won't move the map.
 
 ## Touch: check API status
 

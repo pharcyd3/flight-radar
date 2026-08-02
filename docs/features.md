@@ -10,6 +10,7 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 - **Heading arrows** — moving aircraft show a short arrow in their direction of travel.
 - **Position trails** — the selected aircraft leaves a fading breadcrumb trail of its recent reported positions. (Shares the **Heading trails** setting.)
 - **Colour-coded state** — airborne, on-ground (grey), selected (accent), and emergency (red, with an extra ring).
+- **Drag to look around** — pan the view off centre in either normal or follow mode, with a reticle icon to snap back. Display-only: your home and the search area don't move.
 - **Selectable aircraft icon** — plain dots with a heading arrow, or heading-oriented plane shapes.
 - **Callsign labels** — show none, only the selected aircraft, or all of them.
 - **Range rings** — three concentric rings with an **N** tick and distance labels (toggleable).
@@ -41,7 +42,7 @@ Supporting behaviour:
 ## Location & setup
 
 - **Captive-portal setup** — first boot broadcasts a `Franks-Flight-Radar-Setup` WiFi network with a browser-based wizard for WiFi and location. See [Getting Started](getting-started.md).
-- **Always-on web config** — once on your network the device serves its settings page at **`http://flightradar.local`** continuously, so location and favourites can be changed from any browser without touching the device, dropping its WiFi, or interrupting the radar.
+- **Always-on web config** — once on your network the device serves its settings page at **`http://flightradar.local`** continuously. The **Config** page carries the whole settings menu (location, favourites, and every display option) as dropdowns generated from the same list the device menu uses, so the two can't drift. **Configure WiFi** is separate and handles only credentials. Nothing is interrupted while you use it.
 - **IP auto-detect** — leave the location fields blank and the device locates itself (approximately, from its public IP) once online. No coordinate lookup needed.
 - **Place-name search** — type a place (e.g. `Berlin`) instead of coordinates; it's geocoded via OpenStreetMap after the device reconnects.
 - **Manual coordinates** — enter precise decimal lat/lon if you prefer.
