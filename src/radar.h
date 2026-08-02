@@ -76,6 +76,10 @@ public:
     // True when a tap lands on the recentre icon.
     bool hitRecenterIcon(int tx, int ty) const;
 
+    // True when a tap lands on the "set home here" house icon. Only meaningful
+    // while browsing — see drawSetHomeIcon().
+    bool hitSetHomeIcon(int tx, int ty) const;
+
     // Index of the aircraft with this icao24, or -1 if it isn't in the set.
     int findByIcao(const std::vector<Aircraft>& aircraft, const char* icao) const;
 
@@ -206,6 +210,10 @@ private:
     // plain tap anywhere off the UNFOLLOW/HIDE-OTHERS buttons already resets
     // the pan — this only makes that affordance visible.
     void drawRecenterIcon();
+    // House icon, shown beside the recentre icon while browsing: makes the spot
+    // you've dragged to your new home. Hidden while following, where the centre
+    // is a moving aircraft and "set home here" would mean nothing.
+    void drawSetHomeIcon();
     void drawSignalLostNotice();
     void drawPollIcon(unsigned long lastUpdateMs, bool fetching);
     void drawApiStatusOverlay();
@@ -297,4 +305,9 @@ private:
     // (above) and the UNFOLLOW bar (below) at every zoom level.
     static constexpr int RCTR_X = 206;
     static constexpr int RCTR_Y = 120;
+    // Directly above the recentre icon, far enough apart that the two generous
+    // hit targets don't overlap, and clear of every panel (the status overlay
+    // suppresses both icons anyway).
+    static constexpr int HOME_BTN_X = 206;
+    static constexpr int HOME_BTN_Y = 84;
 };

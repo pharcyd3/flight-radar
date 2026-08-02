@@ -102,8 +102,17 @@ static int  followTouchDownX = 0, followTouchDownY = 0;
 static int  followTouchLastX = 0, followTouchLastY = 0;
 static bool followTouchOnButton = false, followTouchDragged = false;
 
-static float viewLat() { return following ? followCenterLat : homeLat(); }
-static float viewLon() { return following ? followCenterLon : homeLon(); }
+// Free browsing: dragging the radar (when not following) moves the view centre
+// itself rather than sliding a fixed window around home, so you can wander
+// anywhere on earth and the fetch box goes with you — pan to Iceland and you
+// see Iceland's traffic. Home stays exactly where it is; it's just drawn as an
+// offset marker until you recentre.
+static bool  browsing  = false;
+static float browseLat = 0.0f;
+static float browseLon = 0.0f;
+
+static float viewLat() { return following ? followCenterLat : (browsing ? browseLat : homeLat()); }
+static float viewLon() { return following ? followCenterLon : (browsing ? browseLon : homeLon()); }
 
 // Display radius drives the on-screen map scale — the normal dial-controlled
 // five-step range, whether following or not.
@@ -111,12 +120,13 @@ static float displayRadiusKm() {
     return ZOOM_STEPS[constrain(zoomIdx, 0, ZOOM_COUNT - 1)];
 }
 
-// Display centre = the view centre (viewLat/Lon) plus the follow-pan offset, if
-// any. Fetching, hit-testing, and the reticle all keep using viewLat()/viewLon()
-// (the plane's true position) unaffected — only what's drawn shifts.
+// Follow mode keeps its own, deliberately different pan: a clamped screen-pixel
+// offset that shifts only what's *drawn*, leaving the fetch box on the tracked
+// aircraft. That's the point of a chase view — the plane must stay findable, so
+// this one stays bounded rather than becoming free browsing.
 static void followPanDeltaLatLon(float& dLat, float& dLon) {
     dLat = dLon = 0.0f;
-    if (followPanPxX == 0 && followPanPxY == 0) return;
+    if (!following || (followPanPxX == 0 && followPanPxY == 0)) return;
     float kmPerPx = displayRadiusKm() / 105.0f;   // PLOT_R
     float cl = cosf(viewLat() * (float)M_PI / 180.0f);
     if (cl < 0.05f) cl = 0.05f;
@@ -127,6 +137,28 @@ static float displayCenterLat() { float dLat, dLon; followPanDeltaLatLon(dLat, d
 static float displayCenterLon() { float dLat, dLon; followPanDeltaLatLon(dLat, dLon); return viewLon() + dLon; }
 
 static void resetFollowPan() { followPanPxX = 0; followPanPxY = 0; }
+
+// Back to home (or, while following, back onto the aircraft).
+static void recentreView() {
+    resetFollowPan();
+    browsing = false;
+}
+
+// Shift the browse centre by a drag, in screen pixels. Unbounded on purpose:
+// latitude is clamped only where the projection gives out near the poles, and
+// longitude wraps, so you can drag right around the world.
+static void browsePan(int dxPx, int dyPx) {
+    if (!browsing) { browsing = true; browseLat = homeLat(); browseLon = homeLon(); }
+    float kmPerPx = displayRadiusKm() / 105.0f;   // PLOT_R
+    float cl = cosf(browseLat * (float)M_PI / 180.0f);
+    if (cl < 0.05f) cl = 0.05f;                   // don't divide away near the poles
+    browseLat += (dyPx * kmPerPx) / 111.0f;
+    browseLon -= (dxPx * kmPerPx) / (111.0f * cl);
+    if (browseLat >  85.0f) browseLat =  85.0f;
+    if (browseLat < -85.0f) browseLat = -85.0f;
+    while (browseLon >  180.0f) browseLon -= 360.0f;
+    while (browseLon < -180.0f) browseLon += 360.0f;
+}
 
 // Banner label for the followed aircraft — its callsign while it's in the current
 // set, otherwise its icao24. Empty when not following.
@@ -142,7 +174,7 @@ static const char* followLabel() {
 static void redraw() {
     radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers,
                     followCenterLat, followCenterLon);
-    radar.setViewPanned(followPanPxX != 0 || followPanPxY != 0);
+    radar.setViewPanned(browsing || followPanPxX != 0 || followPanPxY != 0);
     // Tell the chase view when the target has been unseen long enough to be
     // worth saying so, rather than leaving a coasting mark looking like a hang.
     unsigned long lostMs = following ? (millis() - followLastSeenMs) : 0;
@@ -169,6 +201,7 @@ static void startFollow(int idx) {
 
 static void stopFollow() {
     following = false;
+    browsing  = false;   // back to home rather than wherever the chase ended
     followHaveLastAc = false;
     followIcao[0] = '\0';
     resetFollowPan();
@@ -267,6 +300,23 @@ static void checkSerialCommands() {
             redraw();
         }
         return;
+    }
+    // Drives the free-browse centre the way a drag would, so browsing can be
+    // exercised without a finger on the glass.
+    if (line.startsWith("BROWSE:")) {
+        int sep = line.indexOf(',', 7);
+        if (sep > 0) {
+            browsing  = true;
+            browseLat = line.substring(7, sep).toFloat();
+            browseLon = line.substring(sep + 1).toFloat();
+            selectedAc = -1;
+            lastFetchMs = 0;   // pull traffic for the new area immediately
+            redraw();
+        }
+        return;
+    }
+    if (line == "RECENTRE" || line == "RECENTER") {
+        recentreView(); lastFetchMs = 0; redraw(); return;
     }
     if (line.startsWith("ZOOM:"))  { zoomIdx = constrain(line.substring(5).toInt(), 0, ZOOM_COUNT - 1);
                                      lastFetchMs = 0; redraw(); return; }
@@ -663,7 +713,7 @@ void loop() {
             } else if (radar.hitOthersButton(followTouchDownX, followTouchDownY)) {
                 followHideOthers = !followHideOthers;   // toggle other traffic
             } else if (!followTouchOnButton) {
-                resetFollowPan();   // plain tap on empty space recentres
+                recentreView();     // plain tap on empty space recentres
             }
             redraw();
         }
@@ -673,22 +723,20 @@ void loop() {
         followTouchLastX = touch.x; followTouchLastY = touch.y;
         followTouchDragged = false;
     } else if (touch.isPressed()) {
-        // Drag to look around, exactly as in follow mode.
+        // Drag moves the view centre itself — free browsing, no bounds.
         int dx = touch.x - followTouchLastX, dy = touch.y - followTouchLastY;
         if (dx != 0 || dy != 0) {
-            followPanPxX += dx;
-            followPanPxY += dy;
-            float mag = sqrtf((float)followPanPxX * followPanPxX +
-                              (float)followPanPxY * followPanPxY);
-            if (mag > FOLLOW_PAN_MAX_PX) {
-                float scale = FOLLOW_PAN_MAX_PX / mag;
-                followPanPxX = (int)(followPanPxX * scale);
-                followPanPxY = (int)(followPanPxY * scale);
-            }
             // Only count it as a drag once it's clearly past finger jitter,
             // or an ordinary tap would stop selecting aircraft.
             int tdx = touch.x - followTouchDownX, tdy = touch.y - followTouchDownY;
             if (tdx * tdx + tdy * tdy > 36) followTouchDragged = true;
+            if (followTouchDragged) {
+                browsePan(dx, dy);
+                selectedAc = -1;          // the old index means nothing over there
+                // Pull traffic for wherever we've landed, once the drag settles.
+                zoomFetchPending = true;
+                zoomFetchDueMs   = millis() + ZOOM_FETCH_DEBOUNCE_MS;
+            }
             lastInteractionMs = millis();
             static unsigned long lastDragDrawMs = 0;
             unsigned long tnow = millis();
@@ -700,8 +748,18 @@ void loop() {
         // does: the tracked position drifts during an ordinary tap.
         const int tx = followTouchDownX, ty = followTouchDownY;
         float r = displayRadiusKm();
-        if (radar.hitRecenterIcon(tx, ty) && (followPanPxX || followPanPxY)) {
-            resetFollowPan();
+        if (radar.hitSetHomeIcon(tx, ty) && browsing) {
+            // Adopt the spot you've dragged to. The home crosshair jumping to
+            // the centre is its own confirmation, and it's undone by dragging
+            // somewhere else and tapping again.
+            setHomeLocation(browseLat, browseLon);
+            recentreView();
+            zoomFetchPending = true;
+            zoomFetchDueMs   = millis() + ZOOM_FETCH_DEBOUNCE_MS;
+        } else if (radar.hitRecenterIcon(tx, ty) && browsing) {
+            recentreView();
+            zoomFetchPending = true;              // refetch around home
+            zoomFetchDueMs   = millis() + ZOOM_FETCH_DEBOUNCE_MS;
         } else if (radar.hitPollIcon(tx, ty)) {
             // Tap the poll icon to toggle the API status panel
             radar.setStatusVisible(!radar.statusVisible());

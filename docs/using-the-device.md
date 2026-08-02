@@ -54,13 +54,22 @@ The radar re-centres on that aircraft and tracks it: a **reticle** marks the tra
 - With the **Full** map, the background **re-centres lazily** — it stays put while the aircraft drifts within view, then snaps to re-centre once it wanders far enough, briefly reloading the map there. On the **Lo-fi** or **Off** background this is instant with no reload, so following feels smoothest there.
 - Follow is a **locked mode** — ordinary taps do not back out of it. It ends when you tap **UNFOLLOW**, or when the aircraft has not been seen for 20 minutes (it has landed, or left ADS-B coverage). Through shorter gaps the view keeps coasting along the aircraft's last known heading and re-acquires it when it reappears.
 
-## Touch: drag to look around
+## Touch: drag to go anywhere
 
-**Drag anywhere on the radar** to shift the view off centre — handy for seeing what's behind the detail panel, or just looking further one way. A **reticle icon** appears on the right edge while the view is off centre; tap it to snap back.
+**Drag the radar** to move the view — and keep going. There's no boundary: drag to the next county, across the Channel, or over the Atlantic, and the radar fetches whatever traffic is actually there. Latitude stops at the poles and longitude wraps, so you can circle the globe.
 
-Panning only moves what's *drawn*. Your home location and the area being searched for aircraft don't change, and the drag is limited so you can't lose the centre entirely.
+Two icons appear on the right edge while you're away from home:
 
-Tapping still selects aircraft as normal — only a deliberate drag pans, so a slightly imprecise tap won't move the map.
+| Icon | Does |
+|---|---|
+| **Reticle** | Snaps back to home |
+| **House** | Makes the spot you're looking at your new home |
+
+Your **home crosshair stays visible** wherever it falls on screen, so you can always see which way it is — and browsing never changes it until you tap the house.
+
+Tapping still selects aircraft as normal; only a deliberate drag moves the view, so a slightly imprecise tap won't send you to Norway.
+
+While browsing, the display uses the offline [lo-fi map](map-caching.md#the-lo-fi-vector-map) even if **Map** is set to Full, because fetching street tiles for every place you drag through would stall the device for seconds at a time.
 
 ## Touch: check API status
 

@@ -266,12 +266,13 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     _g = useSprite ? (LovyanGFX*)mapLayer.sprite() : &M5Dial.Display;
 
     int mm = mapMode();
-    // While following, never use the raster map: it would recompose ("loading
-    // map...") every time the tracked plane drifts into new tiles, which both
-    // interrupts the chase and competes with the flight-data fetch for the scarce
-    // heap the HTTPS handshake needs (a failed poll then looks like the target vanished
-    // and drops the follow). The offline vector map re-centres instantly.
-    if (_following && mm == MAP_FULL) mm = MAP_LOFI;
+    // Never use the raster map while the view is moving — following a plane or
+    // being dragged around. It would recompose ("loading map...") every time the
+    // centre crosses into new tiles, which blocks the UI for seconds at a time
+    // and competes with the flight-data fetch for the scarce heap the HTTPS
+    // handshake needs. The offline vector map re-centres instantly and covers
+    // the whole world, so free browsing stays smooth.
+    if ((_following || _viewPanned) && mm == MAP_FULL) mm = MAP_LOFI;
 
     if (mm == MAP_FULL) {
         // beginScene() leaves the pristine map background in the sprite (loading
@@ -292,32 +293,28 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     pollBattery();
     drawBatteryGauge();
 
-    if (_following) {
-        // Home shown at its true offset from the centre (unchanged by panning).
+    // Home is always drawn at its true projected position. With the view at rest
+    // that is exactly the centre, so this covers the plain case and the moved
+    // ones (browsing, or a follow-pan) without a special case — and while
+    // browsing it doubles as a pointer back to where home actually is.
+    {
         int hx, hy;
         worldToScreen(_homeMarkLat, _homeMarkLon, cLat, cLon, radiusKm, hx, hy);
-        _g->drawLine(hx - 5, hy, hx + 5, hy, COL_HOME);
-        _g->drawLine(hx, hy - 5, hx, hy + 5, COL_HOME);
+        _g->drawLine(hx - 6, hy, hx + 6, hy, COL_HOME);
+        _g->drawLine(hx, hy - 6, hx, hy + 6, COL_HOME);
         _g->drawCircle(hx, hy, 3, COL_HOME);
+    }
 
+    if (_following) {
         // Reticle on the tracked aircraft's true position — normally the centre,
         // but projected wherever it actually falls when the view has been
         // dragged away from it (see main.cpp's follow-pan).
         int tx, ty;
         worldToScreen(_followTargetLat, _followTargetLon, cLat, cLon, radiusKm, tx, ty);
         drawReticleGlyph(tx, ty, COL_SEL);
-
-        // The view is centred exactly on the target (tx,ty == CX,CY) unless
-        // main.cpp's follow-pan has shifted it — in which case show a tappable
-        // recentre icon (drawn later, over the aircraft) so it's not lost
-        // underneath them.
         _showRecenter = (tx != CX || ty != CY);
     } else {
         _showRecenter = _viewPanned;
-        // Home crosshair at centre
-        _g->drawLine(CX - 6, CY, CX + 6, CY, COL_HOME);
-        _g->drawLine(CX, CY - 6, CX, CY + 6, COL_HOME);
-        _g->drawCircle(CX, CY, 3, COL_HOME);
     }
 
     // Airports over the map (raster Full or Lo-fi), beneath the aircraft. The
@@ -361,7 +358,12 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
             drawFollowButton();          // FOLLOW control above the detail pill
         }
         // Panning works in both modes, so the recentre affordance does too.
-        if (_showRecenter) drawRecenterIcon();
+        if (_showRecenter) {
+            drawRecenterIcon();
+            // "Make this home" only makes sense when the centre is a place you
+            // chose, not an aircraft that's flying away from you.
+            if (!_following) drawSetHomeIcon();
+        }
     }
 
     if (useSprite) mapLayer.pushScene();
@@ -984,6 +986,22 @@ void RadarDisplay::drawReticleGlyph(int x, int y, uint16_t col) {
     _g->drawLine(x + 5, y, x + 12, y, col);
     _g->drawLine(x, y - 12, x, y - 5, col);
     _g->drawLine(x, y + 5, x, y + 12, col);
+}
+
+bool RadarDisplay::hitSetHomeIcon(int tx, int ty) const {
+    int dx = tx - HOME_BTN_X, dy = ty - HOME_BTN_Y;
+    return (dx * dx + dy * dy) <= (18 * 18);
+}
+
+// Small house: pitched roof over a body, with a door. Drawn in the home colour
+// so it reads as "this is about home" at a glance, against the same dark halo
+// the other marks use for contrast over the map.
+void RadarDisplay::drawSetHomeIcon() {
+    const int x = HOME_BTN_X, y = HOME_BTN_Y;
+    _g->fillCircle(x, y, 13, COL_HALO);
+    _g->fillTriangle(x - 9, y - 1, x, y - 10, x + 9, y - 1, COL_HOME);   // roof
+    _g->drawRect(x - 6, y - 1, 13, 10, COL_HOME);                        // body
+    _g->drawRect(x - 2, y + 4, 5, 5, COL_HOME);                          // door
 }
 
 bool RadarDisplay::hitRecenterIcon(int tx, int ty) const {

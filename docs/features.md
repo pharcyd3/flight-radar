@@ -11,7 +11,7 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 - **Heading arrows** — moving aircraft show a short arrow in their direction of travel.
 - **Position trails** — the selected aircraft leaves a fading breadcrumb trail of its recent reported positions. (Shares the **Heading trails** setting.)
 - **Colour-coded state** — airborne, on-ground (grey), selected (accent), and emergency (red, with an extra ring).
-- **Drag to look around** — pan the view off centre in either normal or follow mode, with a reticle icon to snap back. Display-only: your home and the search area don't move.
+- **Drag to go anywhere** — no boundary: drag across countries or oceans and the radar fetches the traffic that's actually there. A reticle icon snaps back home, a house icon adopts wherever you've landed as the new home, and the home crosshair stays on screen so you can see which way it is. (In follow mode the drag stays bounded and display-only, so the tracked aircraft can't be lost off-screen.)
 - **Selectable aircraft icon** — plain dots with a heading arrow, or heading-oriented plane shapes.
 - **Callsign labels** — show none, only the selected aircraft, or all of them.
 - **Range rings** — three concentric rings with an **N** tick and distance labels (toggleable).
