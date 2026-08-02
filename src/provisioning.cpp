@@ -587,7 +587,11 @@ static void wcSave() {
 }
 
 void startWebConfig() {
-    if (_wcActive || WiFi.status() != WL_CONNECTED) return;
+    if (_wcActive || WiFi.status() != WL_CONNECTED) {
+        Serial.printf("[WebConfig] not starting (active=%d wifi=%d)\n",
+                      _wcActive, WiFi.status() == WL_CONNECTED);
+        return;
+    }
 
     char latStr[16], lonStr[16];
     snprintf(latStr, sizeof(latStr), "%.6f", _homeLat);
@@ -653,6 +657,8 @@ void startWebConfig() {
 
     _wcWm->setConfigPortalBlocking(false);   // serviced from webConfigLoop()
     _wcWm->setSaveParamsCallback(wcSave);
+    Serial.printf("[WebConfig] %d params registered, cfg html %u bytes\n",
+                  _wcWm->getParametersCount(), (unsigned)strlen(_wcCfgHtml));
     _wcWm->startWebPortal();
     _wcActive = true;
 
