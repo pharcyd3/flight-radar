@@ -88,21 +88,25 @@ static const int           REFRESH_DEFAULT      = 1;   // 8 s
 
 // ── Aircraft cap ──────────────────────────────────────────────────────────────
 // Upper bound on aircraft held/drawn per fetch. Bounds heap use for a busy area
-// (the 200 km box over UK airspace can return well over 100), and — crucially on
-// this no-PSRAM device — the result vector is reserve()d to this size once at
-// startup so it never reallocates mid-heap later. A growing/moving vector was
-// splitting the single large free region so no contiguous ~40 KB block remained
-// for the next TLS handshake, stalling the feed after a big response.
-// 80 rather than 120: two buffers of these are reserved up front (the UI's set
-// and the feed's hand-off buffer), so the cap is paid twice in permanently
+// — measured directly against the API, a 400 km query over populated airspace
+// returned 280 — and, crucially on this no-PSRAM device, the result vector is
+// reserve()d to this size once at startup so it never reallocates mid-heap
+// later. A growing/moving vector was splitting the single large free region so
+// no contiguous ~40 KB block remained for the next TLS handshake, stalling the
+// feed after a big response.
+// 80 rather than higher: two buffers of these are reserved up front (the UI's
+// set and the feed's hand-off buffer), so the cap is paid twice in permanently
 // committed heap, directly out of the contiguous block each TLS handshake
-// needs. A 200 km fetch over UK airspace returns ~30, so 80 keeps a wide
-// margin over real traffic while returning ~7 KB to that block.
+// needs — a smaller zoom (200 km over UK airspace) returns ~30, so 80 already
+// keeps a wide margin there, but the widest 400 km step routinely exceeds it
+// in busy airspace.
 //
-// The API returns no particular order, so raising or lowering this does not
-// decide *which* aircraft survive. A followed aircraft is protected explicitly
-// instead — see adsblive.h's keepIcao — rather than relying on it landing
-// inside the cut.
+// When a fetch returns more than this, adsblive.cpp reservoir-samples rather
+// than keeping strictly the nearest — an earlier "always keep nearest" policy
+// meant a busy area's outer reaches were silently never shown at wide zoom,
+// which read as the radar not actually scanning the whole circle. A followed
+// aircraft is still protected explicitly regardless of the sample — see
+// adsblive.h's keepIcao.
 static const int MAX_AIRCRAFT = 80;
 
 // ── Dead-reckoning interpolation ───────────────────────────────────────────────

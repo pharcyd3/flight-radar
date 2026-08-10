@@ -196,6 +196,11 @@ private:
     // following — the detail pill is replaced by the unfollow bar in this
     // mode, so this is the only on-screen readout of those two numbers.
     void drawFollowInfo(const Aircraft& ac, int sx, int sy);
+    // Printed below the reticle instead of drawFollowInfo() when the tracked
+    // aircraft is missing from the latest fetch (an ADS-B coverage gap, e.g.
+    // over open water) — without this, a coasting follow looks identical to
+    // one that's actually given up: same bare reticle, no readout either way.
+    void drawFollowSearching(int tx, int ty);
     void drawTrail(const Aircraft& ac, float centerLat, float centerLon, float radiusKm);
     void drawDetail(const Aircraft& ac);
     void drawFollowButton();

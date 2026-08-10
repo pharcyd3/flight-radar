@@ -13,6 +13,7 @@
 #include <ArduinoJson.h>
 #include <math.h>
 #include "watchdog.h"
+#include <esp_random.h>
 
 static const float KM_PER_NM = 1.852f;
 
@@ -196,21 +197,20 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     const bool wantKeep = (keepIcao && keepIcao[0]);
     bool       gotKeep  = false;
 
-    // Once at the cap, keep the *nearest* aircraft rather than whichever
-    // happened to arrive first. The response has no useful ordering, so at the
-    // widest zoom (400 km can return well over 100 aircraft against a cap of
-    // MAX_AIRCRAFT) first-come would show an arbitrary subset, with the ones
-    // dropped just as likely to be overhead as on the far horizon.
-    //
-    // Planar, not great-circle: only the *ranking* matters here, and over a few
-    // hundred km the two agree on order. Scanning the whole response costs a
-    // little more parse time, but that runs on the fetch task, not the UI.
-    const float cosLat = cosf(centerLat * (float)M_PI / 180.0f);
-    auto dist2 = [&](float lat, float lon) {
-        float dy = lat - centerLat;
-        float dx = (lon - centerLon) * cosLat;
-        return dx * dx + dy * dy;
-    };
+    // Once at the cap, reservoir-sample rather than always keeping the
+    // nearest: a 400 km query over busy airspace can return several hundred
+    // aircraft against a MAX_AIRCRAFT of 80 (that sizing assumed ~30 over a
+    // 200 km UK fetch — the 400 km step outgrew it), and "always keep
+    // nearest" converges on only ever showing a tight cluster around the
+    // centre, with the outer reaches of a wide zoom silently never
+    // populated. Reservoir sampling (Algorithm R) gives every candidate an
+    // equal chance of a surviving slot regardless of arrival order or
+    // distance, so the kept set is spread across whatever the query actually
+    // returned. It's also cheaper per candidate than the old scan-for-worst
+    // eviction (O(1) vs O(MAX_AIRCRAFT)), which was contributing to the
+    // sluggishness that made the clustering noticeable in the first place.
+    int keepSlot = -1;   // reservoir index holding the followed aircraft, once placed
+    int seen      = 0;   // candidates considered so far, including the initial fill
 
     while (true) {
         do {
@@ -268,25 +268,28 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
                             strncmp(ac.icao24, keepIcao, sizeof(ac.icao24)) == 0;
 
         if ((int)out.size() < MAX_AIRCRAFT) {
+            if (isKeep) keepSlot = (int)out.size();
             out.push_back(ac);
             if (isKeep) gotKeep = true;
-            continue;
+        } else if (isKeep) {
+            // The followed aircraft always gets a seat, displacing whichever
+            // slot last happened to hold it (or slot 0 the first time this
+            // fires past the fill phase) — it must survive regardless of how
+            // far out it drifts or how the sampling below would have rolled.
+            int slot = (keepSlot >= 0) ? keepSlot : 0;
+            out[slot] = ac;
+            keepSlot  = slot;
+            gotKeep   = true;
+        } else {
+            // Candidate `seen` (0-indexed, already >= MAX_AIRCRAFT here)
+            // replaces a uniformly-random held slot with probability
+            // MAX_AIRCRAFT / (seen + 1) — standard Algorithm R. Skips the
+            // protected slot rather than rebalancing around it; that slot
+            // effectively survives every round, which is exactly the point.
+            uint32_t j = esp_random() % (uint32_t)(seen + 1);
+            if ((int)j < MAX_AIRCRAFT && (int)j != keepSlot) out[(int)j] = ac;
         }
-
-        // At the cap: displace the farthest aircraft held, but never the
-        // followed one — it must survive regardless of how far out it drifts.
-        int   worst = -1;
-        float worstD = -1.0f;
-        for (int k = 0; k < (int)out.size(); ++k) {
-            if (wantKeep && strncmp(out[k].icao24, keepIcao, sizeof(out[k].icao24)) == 0)
-                continue;
-            float d = dist2(out[k].lat, out[k].lon);
-            if (d > worstD) { worstD = d; worst = k; }
-        }
-        if (worst >= 0 && (isKeep || dist2(ac.lat, ac.lon) < worstD)) {
-            out[worst] = ac;
-            if (isKeep) gotKeep = true;
-        }
+        seen++;
     }
     rf.close();
     LittleFS.remove(JSON_TMP);

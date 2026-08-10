@@ -312,6 +312,18 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         int tx, ty;
         worldToScreen(_followTargetLat, _followTargetLon, cLat, cLon, radiusKm, tx, ty);
         drawReticleGlyph(tx, ty, COL_SEL);
+
+        // Target missing from this fetch (an ADS-B coverage gap) — the loop
+        // below never finds a matching aircraft to call drawFollowInfo() on,
+        // so without this the reticle sits there with no readout, looking
+        // exactly like a follow that's already given up.
+        if (selectedIdx < 0 || selectedIdx >= (int)aircraft.size())
+            drawFollowSearching(tx, ty);
+
+        // The view is centred exactly on the target (tx,ty == CX,CY) unless
+        // main.cpp's follow-pan has shifted it — in which case show a tappable
+        // recentre icon (drawn later, over the aircraft) so it's not lost
+        // underneath them.
         _showRecenter = (tx != CX || ty != CY);
     } else {
         _showRecenter = _viewPanned;
@@ -774,13 +786,19 @@ void RadarDisplay::drawRings(float radiusKm) {
     // glyph edges showed, which is what read as "little black triangles".
     char buf[16];
     _g->setTextColor(COL_RING_LBL, COL_BG);
-    snprintf(buf, sizeof(buf), "%.0fkm", radiusKm * 0.5f);
-    _g->drawString(buf, CX + PLOT_R / 2 + 14, CY);
-    // Outer label sits just INSIDE its ring, right-aligned. Centred at
-    // CX + PLOT_R + 14 it landed at x=239 on a 240 px display, so most of it
-    // was clipped off the edge — and the round bezel cuts in further still.
-    snprintf(buf, sizeof(buf), "%.0fkm", radiusKm);
+    // Both labels sit just INSIDE their own ring, right-aligned, so a wider
+    // string (e.g. "400km" at the max zoom step) grows away from the other
+    // label instead of into it. The inner label used to be centred on a
+    // fixed offset that assumed a short string — fine at "25km", but wide
+    // enough at "200km"/"400km" to visibly overlap the outer label, which
+    // read as the two labels squashed together.
     _g->setTextDatum(MR_DATUM);
+    snprintf(buf, sizeof(buf), "%.0fkm", radiusKm * 0.5f);
+    _g->drawString(buf, CX + PLOT_R / 2 - 4, CY);
+    // Outer label: right-aligned at CX + PLOT_R - 6 rather than centred at
+    // CX + PLOT_R + 14, which landed at x=239 on a 240 px display — most of
+    // it was clipped off the edge, and the round bezel cuts in further still.
+    snprintf(buf, sizeof(buf), "%.0fkm", radiusKm);
     _g->drawString(buf, CX + PLOT_R - 6, CY);
     _g->setTextDatum(MC_DATUM);   // restore — the rest of the frame assumes it
 }
@@ -901,6 +919,12 @@ void RadarDisplay::drawFollowInfo(const Aircraft& ac, int sx, int sy) {
     _g->setTextSize(1);
     _g->setTextColor(COL_SEL, COL_BG);
     _g->drawString(buf, sx, sy + 16);
+}
+
+void RadarDisplay::drawFollowSearching(int tx, int ty) {
+    _g->setTextSize(1);
+    _g->setTextColor(COL_SEL, COL_BG);
+    _g->drawString("SEARCHING...", tx, ty + 16);
 }
 
 void RadarDisplay::drawDetail(const Aircraft& ac) {

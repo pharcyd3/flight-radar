@@ -17,11 +17,13 @@
 // heap can't reliably hold a big response, the TLS context, and the JSON parser
 // all at once. Reports through the shared apiStatus() snapshot (see apistatus.h).
 // `keepIcao` (may be null/empty) is an aircraft that must survive the
-// MAX_AIRCRAFT cap. Parsing otherwise stops at the cap, and the API returns no
-// particular order, so in dense airspace a followed aircraft could sit past the
-// cut and vanish from the set — ending the follow for no reason other than its
-// position in the response. When set, scanning continues past the cap looking
-// only for that one aircraft.
+// MAX_AIRCRAFT cap. The whole response is always parsed regardless of the cap
+// — past it, adsblive.cpp reservoir-samples so the kept set stays spread
+// across whatever was returned rather than converging on a subset. Without
+// keepIcao a followed aircraft is just another candidate in that sample and
+// could be dropped by chance, ending the follow for a reason unrelated to
+// where it actually is; when set, it's excluded from the sample and always
+// kept instead.
 bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
                            std::vector<Aircraft>& out,
                            const char* keepIcao = nullptr);
