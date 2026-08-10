@@ -14,9 +14,29 @@ build_dir = env.subst("$BUILD_DIR")
 obj = os.path.join(build_dir, "lofimap_bin.o")
 
 # Resolve the Xtensa objcopy from the installed toolchain package ($CC isn't the
-# cross-compiler yet this early in the build).
-toolchain = env.PioPlatform().get_package_dir("toolchain-xtensa-esp-elf")
-objcopy = os.path.join(toolchain, "bin", "xtensa-esp-elf-objcopy")
+# cross-compiler yet this early in the build). The package/binary name changed
+# when Espressif unified their per-chip toolchains into one ("esp-elf"); older
+# still-current espressif32 platform releases install the pre-unification
+# per-chip package instead, so check both rather than assuming either is there.
+toolchain = None
+for pkg_name in ("toolchain-xtensa-esp-elf", "toolchain-xtensa-esp32s3"):
+    d = env.PioPlatform().get_package_dir(pkg_name)
+    if d:
+        toolchain = d
+        break
+if toolchain is None:
+    raise SystemExit(
+        "[embed] no Xtensa toolchain package found (looked for "
+        "toolchain-xtensa-esp-elf and toolchain-xtensa-esp32s3)")
+
+objcopy = None
+bindir = os.path.join(toolchain, "bin")
+for fname in os.listdir(bindir):
+    if "objcopy" in fname:
+        objcopy = os.path.join(bindir, fname)
+        break
+if objcopy is None:
+    raise SystemExit("[embed] no objcopy binary found in %s" % bindir)
 
 if not os.path.isfile(blob):
     print("[embed] WARNING: %s missing — lo-fi map will be disabled" % blob)
