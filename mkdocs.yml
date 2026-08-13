@@ -63,4 +63,5 @@ nav:
   - Reference:
     - Troubleshooting: troubleshooting.md
     - Building From Source: development.md
+    - Changelog: changelog.md
     - Credits & License: credits.md

@@ -7,6 +7,8 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       - '.github/workflows/docs.yml'
+      - 'src/**'
+      - 'platformio.ini'
   workflow_dispatch:
 
 permissions:
@@ -31,6 +33,38 @@ jobs:
       - run: pip install mkdocs-material
 
       - run: mkdocs build --strict
+
+      # ── Firmware build & publish ──────────────────────────────────────────
+      # Published into the same site/ dir as the docs, as part of the single
+      # deploy below — actions/deploy-pages fully replaces the live site on
+      # every run, so a second, independently-triggered workflow deploying to
+      # Pages would race this one and silently delete whatever it last
+      # published (or vice versa). Building firmware on every docs-only push
+      # too is a deliberate trade: slower CI, but no overwrite race to reason
+      # about.
+      - run: pip install -U platformio
+
+      - name: Build firmware
+        run: pio run -e m5dial
+
+      - name: Extract FIRMWARE_VERSION and matching changelog entry
+        run: |
+          VERSION=$(grep -oP '#define\s+FIRMWARE_VERSION\s+"\K[^"]+' src/config.h)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not extract FIRMWARE_VERSION from src/config.h" >&2
+            exit 1
+          fi
+          if ! grep -q "^## $VERSION\$" docs/changelog.md; then
+            echo "::error::docs/changelog.md has no '## $VERSION' entry matching FIRMWARE_VERSION — add one before releasing" >&2
+            exit 1
+          fi
+          mkdir -p site/firmware
+          cp .pio/build/m5dial/firmware.bin site/firmware/firmware.bin
+          printf '%s' "$VERSION" > site/firmware/version.txt
+          awk -v ver="$VERSION" '
+            /^## / { if (found) exit; if ($2 == ver) { found=1; next } }
+            found { print }
+          ' docs/changelog.md > site/firmware/changelog.txt
 
       - uses: actions/upload-pages-artifact@v3
         with:

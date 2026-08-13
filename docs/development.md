@@ -23,6 +23,7 @@ flight-radar/
 │   ├── radar.h/.cpp      # all on-screen rendering (rings, aircraft, trails, lo-fi map, overlays, themes)
 │   ├── settings.h/.cpp   # settings menu UI + persisted settings state
 │   ├── provisioning.h/.cpp  # WiFiManager captive portal, NVS persistence, factory reset
+│   ├── ota.h/.cpp        # pull-based OTA: version/changelog check + HTTPUpdate flash, triggered from the web config page
 │   ├── watchdog.h/.cpp   # auto-reset if the main loop ever stalls (wedged blocking call)
 │   └── encoder_debounce.h  # rotary encoder debouncing (see its own extensive comments)
 ├── assets/lofimap.bin   # embedded lo-fi vector map data (generated; linked into flash)
@@ -40,6 +41,10 @@ pio run                                    # build only
 pio run -t upload                          # build + flash
 pio run -t upload --upload-port <port>     # flash to a specific serial port
 ```
+
+## Cutting a release
+
+Bump `FIRMWARE_VERSION` in `src/config.h` and add a matching `## X.Y` section to [`docs/changelog.md`](changelog.md) describing what changed, then push to `main`. `.github/workflows/docs.yml` builds the firmware, extracts that version and changelog section, and publishes `firmware.bin`, `version.txt`, and `changelog.txt` to GitHub Pages alongside the docs — the same deploy, not a separate one, since `actions/deploy-pages` replaces the whole site on every run. The CI build fails if `FIRMWARE_VERSION` has no matching changelog section, so it's not possible to ship an update with no changenotes. Devices already in the field pick it up next time someone opens their web config page and taps **Check for Firmware Updates** — see [Using the Device](using-the-device.md#firmware-updates).
 
 ## Reading serial output
 
