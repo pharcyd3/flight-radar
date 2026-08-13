@@ -27,9 +27,13 @@ The rings, scale and map redraw instantly. Fetching fresh traffic for the new ra
 
 ## Touch: select an aircraft
 
-**Tap an aircraft's dot** to open a detail panel showing its callsign, ICAO24 address, altitude, speed, heading, and country of registration. Tap the same aircraft again (or tap elsewhere) to dismiss it.
+**Tap an aircraft's dot** to select it and open its detail panel — a pill showing three pages of information. **Tap the pill itself** (not the dot) to step to the next page; a small arrow on the pill's edge points the way it'll flip, and flips to point back once you're on the last page. Tap the aircraft's dot again (or tap elsewhere on screen) to dismiss the panel.
 
 ![Aircraft detail panel with the FOLLOW button](images/aircraft-detail.png)
+
+- **Page 1 — Summary:** callsign and ICAO24 hex address, altitude, speed and heading, and the aircraft's type code (e.g. "A320") with a **GND** flag when it's on the ground.
+- **Page 2 — Position:** the aircraft's raw latitude/longitude, its squawk (transponder ID) code, and its distance from home plus how many seconds old that position report is.
+- **Page 3 — Identity:** registration (tail number), full aircraft description (e.g. "Airbus A320-214"), and operator/airline. These come from airplanes.live's own aircraft database, not the plane's live broadcast, so they read "n/a" for aircraft it has no record of.
 
 While an aircraft is selected, it also leaves a short **trail** of its recent positions (a fading breadcrumb line), and the **rotary dial cycles the selection** through the other visible aircraft instead of zooming. Trails share the **Heading trails** setting — turn that off to hide both the heading arrows and the trail.
 
@@ -81,3 +85,7 @@ While browsing, the display uses the offline [lo-fi map](map-caching.md#the-lo-f
 
 - **Short press** (under 3 seconds): opens the **Settings menu** as a floating panel over the live radar. See [Settings Reference](settings-reference.md) for every option. Rotate to move the cursor, press to select/cycle a value, and **tap anywhere on the screen** to close the menu at any time (it also auto-closes after 30 seconds of inactivity).
 - **Hold for 3 seconds**: triggers a **factory reset** — this wipes WiFi credentials, home location, and saved favourites, then reboots into first-boot setup. There's no confirmation for this physical-button combo (it's designed as a recovery mechanism when the device is otherwise unusable), so use it deliberately. The same action is also available as a hold-to-confirm menu item under **Settings → Factory Reset**, which is the safer route for everyday use.
+
+## Firmware updates
+
+Open `http://flightradar.local` (the same always-on page used for location and favourites) and tap **Check for Firmware Updates**, then **Check for updates**. If a newer version is available it shows what's changed, followed by an **Update now** link. Installing takes about a minute; the device downloads the new firmware, flashes it, and restarts on its own — don't power it off while that's happening. Nothing is ever installed without that explicit tap.

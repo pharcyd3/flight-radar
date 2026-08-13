@@ -365,9 +365,23 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
             drawUnfollowBar();           // chase view controls
             drawOthersButton();
             if (_followLost) drawSignalLostNotice();
+            _detailIcao[0] = '\0';      // pill isn't shown here — start fresh
+            _detailPage    = 0;         // next time it is (a different plane, most likely)
         } else if (selectedIdx >= 0 && selectedIdx < (int)aircraft.size()) {
-            drawDetail(aircraft[selectedIdx]);
+            const Aircraft& selAc = aircraft[selectedIdx];
+            // A different aircraft than the pill last showed (new selection, or
+            // this one re-resolved to a new index after a fetch) always starts
+            // back on the summary page.
+            if (strncmp(_detailIcao, selAc.icao24, sizeof(_detailIcao)) != 0) {
+                strncpy(_detailIcao, selAc.icao24, sizeof(_detailIcao) - 1);
+                _detailIcao[sizeof(_detailIcao) - 1] = '\0';
+                _detailPage = 0;
+            }
+            drawDetail(selAc, _detailPage);
             drawFollowButton();          // FOLLOW control above the detail pill
+        } else {
+            _detailIcao[0] = '\0';
+            _detailPage    = 0;
         }
         // Panning works in both modes, so the recentre affordance does too.
         if (_showRecenter) {
@@ -927,16 +941,17 @@ void RadarDisplay::drawFollowSearching(int tx, int ty) {
     _g->drawString("SEARCHING...", tx, ty + 16);
 }
 
-void RadarDisplay::drawDetail(const Aircraft& ac) {
+void RadarDisplay::drawDetail(const Aircraft& ac, int page) {
     // Pill-shaped overlay in the lower portion of the round screen
-    _g->fillRoundRect(18, 148, 204, 76, 6, COL_OVERLAY);
-    _g->drawRoundRect(18, 148, 204, 76, 6, COL_SEL);
+    _g->fillRoundRect(DETAIL_X, DETAIL_Y, DETAIL_W, DETAIL_H, 6, COL_OVERLAY);
+    _g->drawRoundRect(DETAIL_X, DETAIL_Y, DETAIL_W, DETAIL_H, 6, COL_SEL);
 
     char buf[48];
     int lineY = 160;
     const int step = 16;
 
-    // Row 1: callsign + ICAO
+    // Row 1: callsign + ICAO — shown on both pages, so flipping never reads
+    // as having jumped to a different aircraft.
     _g->setTextSize(1);
     _g->setTextColor(COL_SEL, COL_OVERLAY);
     snprintf(buf, sizeof(buf), "%s  [%s]",
@@ -947,31 +962,85 @@ void RadarDisplay::drawDetail(const Aircraft& ac) {
 
     bool metric = activeUnits() == 1;
 
-    // Row 2: altitude (ft or m)
-    if (ac.altM > 0.0f) {
-        if (metric) snprintf(buf, sizeof(buf), "Alt %d m", (int)ac.altM);
-        else        snprintf(buf, sizeof(buf), "Alt %d ft", (int)(ac.altM * 3.28084f));
+    if (page == 0) {
+        // Row 2: altitude (ft or m)
+        if (ac.altM > 0.0f) {
+            if (metric) snprintf(buf, sizeof(buf), "Alt %d m", (int)ac.altM);
+            else        snprintf(buf, sizeof(buf), "Alt %d ft", (int)(ac.altM * 3.28084f));
+        } else {
+            snprintf(buf, sizeof(buf), "Alt  n/a");
+        }
+        _g->drawString(buf, CX, lineY);   lineY += step;
+
+        // Row 3: speed (kts or km/h) + heading. The default font has no glyph
+        // at all for the degree sign — a correct UTF-8 encoding still fell
+        // back to a placeholder "tofu" box, because the font itself simply
+        // lacks that character, not because of an encoding mismatch. Drawing
+        // a small hollow circle by hand right after the number sidesteps
+        // needing the font to have it at all.
+        int speed = metric ? (int)(ac.speedMs * 3.6f) : (int)(ac.speedMs * 1.94384f);
+        snprintf(buf, sizeof(buf), "%d %s  %03.0f", speed, metric ? "km/h" : "kts", ac.heading);
+        _g->drawString(buf, CX, lineY);
+        int textW = _g->textWidth(buf);
+        _g->drawCircle(CX + textW / 2 + 5, lineY - 4, 2, COL_STATUS);
+        lineY += step;
+
+        // Row 4: type / on-ground flag
+        snprintf(buf, sizeof(buf), "%s%s", ac.country, ac.onGround ? "  [GND]" : "");
+        _g->drawString(buf, CX, lineY);
+    } else if (page == 1) {
+        // Row 2: raw position — the summary page already covers type/on-ground
+        // (row 4) and distance-from-home below covers a derived value, but not
+        // the plane-spotter-useful raw lat/lon itself.
+        snprintf(buf, sizeof(buf), "%.3f, %.3f", ac.lat, ac.lon);
+        _g->drawString(buf, CX, lineY);   lineY += step;
+
+        // Row 3: squawk code
+        snprintf(buf, sizeof(buf), "Squawk %s", ac.squawk[0] ? ac.squawk : "n/a");
+        _g->drawString(buf, CX, lineY);   lineY += step;
+
+        // Row 4: distance from home + how fresh this position report is.
+        // Planar approximation, same idiom as the trail-span calc above and
+        // lofimap's tile math — fine at these sub-1000 km distances.
+        float dLatKm = (ac.lat - _homeMarkLat) * KM_PER_DEG;
+        float dLonKm = (ac.lon - _homeMarkLon) * KM_PER_DEG *
+                       cosf(_homeMarkLat * (float)M_PI / 180.0f);
+        float homeKm = sqrtf(dLatKm * dLatKm + dLonKm * dLonKm);
+        // Same "age at fetch + elapsed since" reckoning effectivePos() uses,
+        // so this agrees with how stale the plotted position actually is.
+        float ageS = ac.posAgeS + (float)(millis() - _fetchMs) / 1000.0f;
+        if (metric) snprintf(buf, sizeof(buf), "%.0f km  %.0fs old", homeKm, ageS);
+        else        snprintf(buf, sizeof(buf), "%.0f mi  %.0fs old", homeKm * 0.621371f, ageS);
+        _g->drawString(buf, CX, lineY);
     } else {
-        snprintf(buf, sizeof(buf), "Alt  n/a");
+        // Identity page — registration, full aircraft description, and
+        // operator/airline, straight from airplanes.live's DB lookup. New
+        // data, not shown on the other two pages, so blank/unknown rather
+        // than derived: shows "n/a" rather than falling back to a value
+        // already visible elsewhere.
+
+        // Row 2: registration (tail number)
+        snprintf(buf, sizeof(buf), "Reg  %s", ac.reg[0] ? ac.reg : "n/a");
+        _g->drawString(buf, CX, lineY);   lineY += step;
+
+        // Row 3: aircraft description (e.g. "Airbus A320-214")
+        _g->drawString(ac.desc[0] ? ac.desc : "Type n/a", CX, lineY);   lineY += step;
+
+        // Row 4: operator/airline
+        _g->drawString(ac.ownOp[0] ? ac.ownOp : "Operator n/a", CX, lineY);
     }
-    _g->drawString(buf, CX, lineY);   lineY += step;
 
-    // Row 3: speed (kts or km/h) + heading. The default font has no glyph at
-    // all for the degree sign — a correct UTF-8 encoding still fell back to
-    // a placeholder "tofu" box, because the font itself simply lacks that
-    // character, not because of an encoding mismatch. Drawing a small hollow
-    // circle by hand right after the number sidesteps needing the font to
-    // have it at all.
-    int speed = metric ? (int)(ac.speedMs * 3.6f) : (int)(ac.speedMs * 1.94384f);
-    snprintf(buf, sizeof(buf), "%d %s  %03.0f", speed, metric ? "km/h" : "kts", ac.heading);
-    _g->drawString(buf, CX, lineY);
-    int textW = _g->textWidth(buf);
-    _g->drawCircle(CX + textW / 2 + 5, lineY - 4, 2, COL_STATUS);
-    lineY += step;
-
-    // Row 4: country / on-ground flag
-    snprintf(buf, sizeof(buf), "%s%s", ac.country, ac.onGround ? "  [GND]" : "");
-    _g->drawString(buf, CX, lineY);
+    // Disclosure chevron, pinned to the pill's edge (clear of the centred
+    // text regardless of string width): right-pointing "there's more" on
+    // every page but the last, left-pointing "back to the start" there.
+    // Inset 16px rather than hugging the edge — the pill sits low on a round
+    // screen, and the visible chord narrows fast there, so an edge-hugging
+    // chevron reads as clipped against the bezel.
+    bool lastPage = (page == DETAIL_PAGES - 1);
+    int dir = lastPage ? -1 : 1;
+    int ax  = lastPage ? DETAIL_X + 16 : DETAIL_X + DETAIL_W - 16;
+    int ay  = DETAIL_Y + DETAIL_H / 2;
+    _g->fillTriangle(ax - dir * 4, ay - 5, ax - dir * 4, ay + 5, ax + dir * 4, ay, COL_SEL);
 }
 
 void RadarDisplay::drawFollowButton() {
@@ -1111,6 +1180,11 @@ bool RadarDisplay::hitPollIcon(int tx, int ty) const {
 bool RadarDisplay::hitFollowButton(int tx, int ty) const {
     return tx >= FBTN_X && tx <= FBTN_X + FBTN_W &&
            ty >= FBTN_Y && ty <= FBTN_Y + FBTN_H;
+}
+
+bool RadarDisplay::hitDetailPill(int tx, int ty) const {
+    return tx >= DETAIL_X && tx <= DETAIL_X + DETAIL_W &&
+           ty >= DETAIL_Y && ty <= DETAIL_Y + DETAIL_H;
 }
 
 // A few px of slop beyond the drawn edge on both — short buttons close to the

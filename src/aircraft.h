@@ -11,6 +11,16 @@ struct Aircraft {
     // byte here costs ~2 × MAX_AIRCRAFT of the contiguous heap the TLS
     // handshake needs. All writers bound themselves with sizeof().)
     char  country[12];
+    // Registration/tail number (e.g. "G-EZJC"), full aircraft description
+    // (e.g. "Airbus A320-214"), and operator/airline — all come from
+    // airplanes.live's aircraft database lookup, so blank ("") when it has
+    // no match rather than when the plane itself lacks the field. First cut
+    // at these sizes: same heap trade-off as country above (~58 more bytes
+    // × MAX_AIRCRAFT × 2 buffers), being tested on real hardware to see if
+    // it still leaves the TLS handshake enough contiguous heap.
+    char  reg[10];
+    char  desc[24];
+    char  ownOp[24];
     char  squawk[6];    // e.g. "7700" or "" if unknown
     float lat;
     float lon;

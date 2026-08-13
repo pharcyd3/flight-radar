@@ -189,7 +189,7 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     // and heap per element than parsing the whole thing.
     JsonDocument filter;
     for (const char* k : { "hex", "flight", "lat", "lon", "alt_baro", "gs",
-                           "track", "squawk", "seen_pos", "t" })
+                           "track", "squawk", "seen_pos", "t", "r", "desc", "ownOp" })
         filter[k] = true;
 
     JsonDocument elem;
@@ -244,6 +244,15 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
         // field, and the type is more useful for planespotting anyway.
         const char* type = elem["t"] | "";
         strncpy(ac.country, type, sizeof(ac.country) - 1);
+
+        const char* reg = elem["r"] | "";
+        strncpy(ac.reg, reg, sizeof(ac.reg) - 1);
+
+        const char* desc = elem["desc"] | "";
+        strncpy(ac.desc, desc, sizeof(ac.desc) - 1);
+
+        const char* ownOp = elem["ownOp"] | "";
+        strncpy(ac.ownOp, ownOp, sizeof(ac.ownOp) - 1);
 
         ac.lat = elem["lat"].as<float>();
         ac.lon = elem["lon"].as<float>();

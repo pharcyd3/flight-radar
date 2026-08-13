@@ -772,6 +772,11 @@ void loop() {
             // touch is already down, so it will never see a wasPressed() edge.
             followTouchOnButton = true;
             followTouchDragged  = false;
+        } else if (selectedAc >= 0 && !radar.statusVisible() &&
+                   radar.hitDetailPill(tx, ty)) {
+            // Tap the detail pill itself (not the FOLLOW button above it) to
+            // cycle to its next page.
+            radar.advanceDetailPage();
         } else {
             radar.setStatusVisible(false);   // any other tap dismisses the panel
             // Hit-test against what's actually drawn, which is the panned

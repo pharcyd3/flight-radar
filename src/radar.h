@@ -108,6 +108,17 @@ public:
     // True when a tap lands on the FOLLOW button shown in the detail panel.
     bool hitFollowButton(int tx, int ty) const;
 
+    // True when a tap lands on the detail pill itself (not its FOLLOW button
+    // above) — cycles it through its pages. See _detailPage.
+    bool hitDetailPill(int tx, int ty) const;
+
+    // Advances the detail pill to its next page, wrapping back to the summary
+    // page after the last. Ignored (harmlessly — just advances state that
+    // isn't currently drawn) if the pill isn't showing; draw() also resets to
+    // the summary page whenever the selected aircraft changes, so this never
+    // leaks onto a different plane.
+    void advanceDetailPage() { _detailPage = (_detailPage + 1) % DETAIL_PAGES; }
+
     // True when a tap lands on the "UNFOLLOW <flight>" bar shown while following.
     bool hitUnfollowButton(int tx, int ty) const;
 
@@ -202,7 +213,11 @@ private:
     // one that's actually given up: same bare reticle, no readout either way.
     void drawFollowSearching(int tx, int ty);
     void drawTrail(const Aircraft& ac, float centerLat, float centerLon, float radiusKm);
-    void drawDetail(const Aircraft& ac);
+    // page selects among the DETAIL_PAGES detail pages: 0 is the summary
+    // (altitude/speed/heading/type), 1 is position (lat/lon/squawk/distance
+    // from home/position age), 2 is identity (registration/description/
+    // operator). See _detailPage.
+    void drawDetail(const Aircraft& ac, int page);
     void drawFollowButton();
     void drawUnfollowBar();
     void drawOthersButton();
@@ -249,6 +264,13 @@ private:
 
     bool _showStatus = false;
 
+    // Which page the detail pill is showing (see drawDetail()/advanceDetailPage()),
+    // and the icao24 it's currently showing that for — draw() collapses back to the
+    // summary page whenever the selection moves to a different aircraft (or none),
+    // so a later page never lingers onto a plane it wasn't opened for.
+    int  _detailPage        = 0;
+    char _detailIcao[8]     = "";
+
     // Cached battery state. The reading goes over the power IC and changes far
     // slower than the ~2 Hz redraw, so it's refreshed on a timer instead of
     // per frame. _battPresent stays false on a device with no battery fitted
@@ -292,6 +314,14 @@ private:
     static constexpr int FBTN_Y = 126;
     static constexpr int FBTN_W = 104;
     static constexpr int FBTN_H = 20;
+
+    // Detail pill — summary/expanded info for the selected (not-following)
+    // aircraft. A tap anywhere on it (see hitDetailPill()) flips the page.
+    static constexpr int DETAIL_X = 18;
+    static constexpr int DETAIL_Y = 148;
+    static constexpr int DETAIL_W = 204;
+    static constexpr int DETAIL_H = 76;
+    static constexpr int DETAIL_PAGES = 3;
 
     // UNFOLLOW <flight> bar — a single wide button along the bottom shown while
     // following (replaces the detail panel, so the chase view stays uncluttered).
