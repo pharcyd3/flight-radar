@@ -1,8 +1,8 @@
 # Flash Firmware
 
-Install the latest firmware directly from this page — no PlatformIO, no command line. Plug the M5Dial in over USB, then use the button below.
+Install the latest firmware directly from this page — no PlatformIO, no command line, no cloning the repo. Works for a brand new, never-flashed M5Dial or for updating one already running.
 
-**Requirements:**
+**You need:**
 
 - A USB cable connecting the M5Dial to this computer
 - **Chrome or Edge** — this uses the [Web Serial API](https://developer.chrome.com/docs/capabilities/serial), which Firefox and Safari don't support
@@ -12,9 +12,19 @@ Install the latest firmware directly from this page — no PlatformIO, no comman
 <esp-web-install-button manifest="../firmware/manifest.json">
 </esp-web-install-button>
 
-Click **Connect**, pick the M5Dial's serial port from the browser's list, then **Install**. It takes under a minute; the device reboots on its own when done.
+1. Plug the M5Dial into this computer with USB.
+2. Click **Connect** above.
+3. A browser popup lists nearby serial devices — pick the M5Dial's entry and confirm. (Nothing listed? See [Troubleshooting](#troubleshooting) below.)
+4. Click **Install**.
+5. Wait — it takes under a minute. The device reboots on its own when done; you don't need to touch it.
 
 See the [Changelog](changelog.md) for what's in the latest version.
+
+## Troubleshooting
+
+- **No devices in the popup list** — try a different USB cable (some are charge-only, with no data lines) or a different USB port. On Windows, the M5Dial should also appear in Device Manager under "Ports (COM & LPT)" if the driver's working.
+- **Button says the browser isn't supported** — you're not in Chrome or Edge. Copy this page's URL into one of those.
+- **Install fails partway through** — unplug and replug the M5Dial, click Connect again, and retry. If it keeps failing, try a shorter/better-quality USB cable — flashing needs a stable data connection.
 
 ## Why USB instead of wireless
 

@@ -16,7 +16,7 @@ It polls [airplanes.live](https://airplanes.live/)'s free, keyless community ADS
 - **Live radar display** — aircraft plotted by position, heading, altitude, and speed, refreshed on a timer you control, gliding smoothly between updates
 - **Three map backgrounds** — a real OpenStreetMap street map, an offline lo-fi vector map (coastlines, borders, rivers, and city labels), or a plain radar scope
 - **Rotary zoom** — five range rings from 10&nbsp;km to 200&nbsp;km, one twist per step
-- **Touch to inspect** — tap any aircraft for its callsign, altitude, speed, heading, and country of registration
+- **Touch to inspect** — tap any aircraft for its callsign, altitude, speed, heading, registration, and full aircraft type
 - **Follow an aircraft** — lock onto a plane and let the radar chase it across the map
 - **Effortless location setup** — auto-detect from your network, search by place name, or enter coordinates; store up to three favourites and switch instantly
 - **Emergency squawk detection** — 7500 (hijack), 7600 (radio failure), and 7700 (general emergency) are highlighted in red with an on-screen ring flash and an audible alert

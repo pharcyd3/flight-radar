@@ -4,13 +4,15 @@
 
 - An **M5Stack M5Dial** (ESP32-S3)
 - A USB-C cable
-- A computer with [PlatformIO](https://platformio.org/) (via the [PlatformIO IDE extension](https://platformio.org/platformio-ide) for VS Code, or the standalone `pio` CLI)
+- A computer running **Chrome or Edge** (for flashing from the browser — see below), or [PlatformIO](https://platformio.org/) if you'd rather build from source
 - A 2.4&nbsp;GHz WiFi network (the M5Dial's ESP32-S3 radio does not support 5&nbsp;GHz)
 - A phone or laptop to complete the on-device setup wizard
 
 ## 1. Flash the firmware
 
-Clone the repository and build/upload with PlatformIO:
+**Easiest: flash from your browser** — no installs, no cloning the repo. Plug the M5Dial in over USB, open **[Flash Firmware](flash.md)** in Chrome or Edge, click **Connect**, pick the M5Dial from the list, then **Install**. Takes under a minute; the device reboots on its own when done.
+
+**Building from source instead?** Clone the repository and build/upload with PlatformIO:
 
 ```bash
 git clone https://github.com/pharcyd3/flight-radar.git
