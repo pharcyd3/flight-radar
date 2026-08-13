@@ -15,6 +15,8 @@ There are three distinct causes, and the status panel tells you which one you're
 
 **Status shows "ONLINE" but the radar still looks empty** — check your **Traffic** and **Min altitude** filters (Settings menu) aren't hiding everything currently in range, and confirm you're not zoomed in tighter than where the traffic actually is.
 
+**The device restarts on its own after a long stretch with no aircraft** — this is deliberate, not a crash. This no-PSRAM board's free memory can fragment badly enough after long uptimes that new HTTPS connections fail (look for `SSL - Memory allocation failed` on the serial console), and fragmentation doesn't clear on its own. If a fetch that was previously working goes 5 minutes without a single success, the device restarts itself for a clean heap rather than sitting silently broken. Normal operation resumes immediately after.
+
 ## Map not showing, or looks broken/blank
 
 - The very first time you visit a given location/zoom, a **"loading map..."** message is expected while tiles fetch over WiFi (a few seconds).

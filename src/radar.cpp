@@ -308,10 +308,15 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     if (_following) {
         // Reticle on the tracked aircraft's true position — normally the centre,
         // but projected wherever it actually falls when the view has been
-        // dragged away from it (see main.cpp's follow-pan).
+        // dragged away from it (see main.cpp's follow-pan). Red instead of the
+        // usual theme colour while tracking an emergency squawk — checkEmergency()
+        // (main.cpp) auto-follows onto exactly this aircraft, so selectedIdx is
+        // already resolved to it whenever this is true.
+        bool trackedEmergency = selectedIdx >= 0 && selectedIdx < (int)aircraft.size() &&
+                                aircraft[selectedIdx].isEmergency();
         int tx, ty;
         worldToScreen(_followTargetLat, _followTargetLon, cLat, cLon, radiusKm, tx, ty);
-        drawReticleGlyph(tx, ty, COL_SEL);
+        drawReticleGlyph(tx, ty, trackedEmergency ? COL_HOME : COL_SEL);
 
         // Target missing from this fetch (an ADS-B coverage gap) — the loop
         // below never finds a matching aircraft to call drawFollowInfo() on,
@@ -933,6 +938,13 @@ void RadarDisplay::drawFollowInfo(const Aircraft& ac, int sx, int sy) {
     _g->setTextSize(1);
     _g->setTextColor(COL_SEL, COL_BG);
     _g->drawString(buf, sx, sy + 16);
+
+    if (ac.isEmergency()) {
+        char sq[16];
+        snprintf(sq, sizeof(sq), "SQUAWK %s", ac.squawk[0] ? ac.squawk : "----");
+        _g->setTextColor(COL_HOME, COL_BG);
+        _g->drawString(sq, sx, sy + 32);
+    }
 }
 
 void RadarDisplay::drawFollowSearching(int tx, int ty) {
@@ -1128,14 +1140,15 @@ void RadarDisplay::drawRecenterIcon() {
 void RadarDisplay::flashEmergencyRing() {
     // 3 px thick ring just inside the round screen bezel (radius 115–117)
     auto& d = M5Dial.Display;
-    for (int flash = 0; flash < 3; flash++) {
+    const int FLASHES = 10;
+    for (int flash = 0; flash < FLASHES; flash++) {
         for (int r = 115; r <= 117; r++)
             d.drawCircle(CX, CY, r, COL_HOME);   // COL_HOME = red
-        M5Dial.Speaker.tone(2200, 150);
+        M5Dial.Speaker.tone(2200, 300);   // fills the ring's full 300ms on-screen — was 150, left the back half silent
         delay(300);
         for (int r = 115; r <= 117; r++)
             d.drawCircle(CX, CY, r, COL_BG);
-        if (flash < 2) delay(180);
+        if (flash < FLASHES - 1) delay(180);
     }
 }
 

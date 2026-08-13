@@ -242,6 +242,36 @@ static void checkSerialCommands() {
     if (line == "PAUSE")     { screenshotPaused = true;  return; }
     if (line == "RESUME")    { screenshotPaused = false; return; }
     if (line == "SPLASH")    { radar.drawBoot(); return; }
+    // Triggers the emergency-squawk ring flash + buzzer directly, without a
+    // real squawking aircraft (or the checkEmergency() cooldown) in the way —
+    // for tuning/testing the alert itself.
+    if (line == "BUZZ")      { radar.flashEmergencyRing(); return; }
+    // Full simulation: injects a fake 7700-squawking aircraft near the current
+    // view so it actually renders on the radar (red mark, ring, forced label)
+    // exactly like a real one, then fires the same alert a real detection
+    // would — including the auto-follow (see checkEmergency()). Bypasses the
+    // cooldown so it always fires on request. Overwritten by the next
+    // successful poll, same as any other stale entry.
+    if (line == "SQUAWK") {
+        Aircraft fake{};
+        strncpy(fake.icao24,   "7DEBUG",  sizeof(fake.icao24) - 1);
+        strncpy(fake.callsign, "TEST7700", sizeof(fake.callsign) - 1);
+        strncpy(fake.squawk,   "7700",    sizeof(fake.squawk) - 1);
+        strncpy(fake.country,  "TEST",    sizeof(fake.country) - 1);   // type field
+        fake.lat      = viewLat() + 0.02f;   // offset so it isn't hidden under the home mark
+        fake.lon      = viewLon() + 0.02f;
+        fake.altM     = 3000.0f;
+        fake.speedMs  = 120.0f;
+        fake.heading  = 45.0f;
+        fake.onGround = false;
+        aircraft.push_back(fake);
+        Serial.println("[Debug] injected simulated 7700 squawk");
+        if (!following || strcmp(followIcao, fake.icao24) != 0)
+            startFollow((int)aircraft.size() - 1);
+        redraw();
+        radar.flashEmergencyRing();
+        return;
+    }
     if (line == "INFO") {
         Serial.printf("INFO ac=%d zoom=%d map=%d sel=%d follow=%d hide=%d heap=%u "
                       "home=%.4f,%.4f view=%.4f,%.4f pan=%d,%d "
@@ -363,7 +393,8 @@ static void checkSerialCommands() {
 static void checkEmergency() {
     if (!buzzOnEmergency()) return;
 
-    for (const Aircraft& ac : aircraft) {
+    for (int i = 0; i < (int)aircraft.size(); ++i) {
+        const Aircraft& ac = aircraft[i];
         if (!ac.isEmergency()) continue;
 
         unsigned long now = millis();
@@ -377,6 +408,12 @@ static void checkEmergency() {
         Serial.printf("[Alert] Emergency squawk %s on %s\n",
                       ac.squawk, ac.icao24);
 
+        // Lock onto it automatically — the whole point of an emergency alert
+        // is that this is the one aircraft worth watching right now. No-op if
+        // already following this exact aircraft, so a repeat alert on an
+        // ongoing emergency doesn't yank the view/reset the follow-pan.
+        if (!following || strcmp(followIcao, ac.icao24) != 0) startFollow(i);
+
         // Draw current radar so the ring flashes over real content
         redraw();
         radar.flashEmergencyRing();
@@ -389,6 +426,14 @@ static void checkEmergency() {
 // flight" look from feed::busy() on the next scheduled redraw, so there's no
 // need to force an extra full-frame composite here.
 static void startFetch() {
+    // Give the fetch the biggest contiguous heap this no-PSRAM board can
+    // offer: release the map's PNG decode buffer if it's currently resident
+    // (e.g. mid-precache-round — previously only released once the *whole*
+    // round finished, which could leave it held for minutes) rather than
+    // leaving it to compete with the TLS handshake below. Cheap and
+    // idempotent — a later compose just re-primes it on demand.
+    mapLayer.releaseDecoder();
+
     // While following, name the tracked aircraft so it survives the
     // MAX_AIRCRAFT cap even in dense airspace (see adsblive.h).
     feed::request(viewLat(), viewLon(), displayRadiusKm(),
@@ -818,6 +863,18 @@ void loop() {
         aircraft.clear();
         selectedAc = -1;
         redraw();
+    }
+
+    // Safety net: the feed was working at some point but hasn't landed a good
+    // fetch in FEED_STUCK_RESTART_MS despite repeated retries — almost always
+    // heap fragmentation after long uptime, which doesn't clear on its own.
+    // Restart for a clean heap rather than leaving an unattended device
+    // silently broken for hours.
+    if (lastGoodFetchMs != 0 && now - lastGoodFetchMs > FEED_STUCK_RESTART_MS) {
+        Serial.println("[Feed] stuck for 5 min with no good fetch — restarting for a clean heap");
+        Serial.flush();
+        delay(200);
+        ESP.restart();
     }
 
     // ── Follow: keep the tracked aircraft glued to the centre ───────────────────

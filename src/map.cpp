@@ -5,6 +5,7 @@
 #include "map.h"
 #include "config.h"
 #include "watchdog.h"
+#include "aircraftfeed.h"
 
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -108,6 +109,15 @@ static bool fetchTileToFile(WiFiClientSecure& client, HTTPClient& http,
 // ── Compose / cache ───────────────────────────────────────────────────────────
 
 bool MapLayer::compose(float lat, float lon, float r) {
+    // Don't start a second heap-hungry TLS session while a flight-data fetch
+    // is already using one — this used to be guarded only for the idle
+    // precache path (feed::busy() gates maybePrecacheMaps() in main.cpp), not
+    // for a live compose triggered by zooming into fresh, uncached territory.
+    // Bail and let the caller retry next frame: ensure()/beginScene() leave
+    // _haveMap false on a false return, so the very next call re-attempts
+    // this instead of getting stuck.
+    if (feed::busy()) return false;
+
     // Make sure the PNG decoder is allocated (it's freed between precache rounds
     // to give flight-data polls headroom). If it can't be re-primed on this heap the
     // tiles can't be decoded, so bail — the radar falls back to a solid bg.

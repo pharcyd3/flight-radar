@@ -91,6 +91,16 @@ static const unsigned long ZOOM_FETCH_DEBOUNCE_MS = 350UL;
 // answer. Matches INTERP_MAX_S below.
 static const unsigned long FEED_STALE_CLEAR_MS = 120000UL;
 
+// If a fetch has succeeded at least once since boot but then nothing lands
+// for this long despite repeated retries, treat the feed as stuck rather
+// than just quiet — most often heap fragmentation after long uptime (see
+// docs/troubleshooting.md's "SSL - Memory allocation failed" entry) doesn't
+// clear itself, so the device restarts for a clean heap rather than sitting
+// silently broken for hours on an unattended shelf. Gated on "succeeded at
+// least once" so this never masks a device that's never had working
+// WiFi/internet at all — that's a different problem restarting won't fix.
+static const unsigned long FEED_STUCK_RESTART_MS = 300000UL;   // 5 min
+
 // ── Polling ───────────────────────────────────────────────────────────────────
 // airplanes.live is keyless with no credit/quota model (fair use ~1 req/s), so
 // there's no tiering to adapt to — just a flat list of intervals. Default is a

@@ -133,7 +133,7 @@ public:
 
     void drawBoot();
 
-    // Emergency alert — 3× red ring flash + buzzer beep
+    // Emergency alert — 10× red ring flash + buzzer beep
     void flashEmergencyRing();
 
     // Returns index of tapped aircraft, or -1 if none hit
