@@ -88,4 +88,4 @@ While browsing, the display uses the offline [lo-fi map](map-caching.md#the-lo-f
 
 ## Firmware updates
 
-Open `http://flightradar.local` (the same always-on page used for location and favourites) and tap **Check for Firmware Updates**, then **Check for updates**. If a newer version is available it shows what's changed, followed by an **Update now** link. Installing takes about a minute; the device downloads the new firmware, flashes it, and restarts on its own — don't power it off while that's happening. Nothing is ever installed without that explicit tap.
+Connect the device to a computer by USB and open the [Flash Firmware](flash.md) page in Chrome or Edge — it flashes straight from the browser, no PlatformIO or command line needed. See that page for details on why it's USB rather than wireless.

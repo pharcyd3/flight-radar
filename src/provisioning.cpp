@@ -3,7 +3,6 @@
 #include "map.h"
 #include "geolocate.h"
 #include "settings.h"
-#include "ota.h"
 #include <M5Dial.h>
 #include <WiFiManager.h>
 #include <ESPmDNS.h>
@@ -587,94 +586,6 @@ static void wcSave() {
     Serial.println("[WebConfig] settings saved");
 }
 
-// ── Firmware update page ──────────────────────────────────────────────────────
-// Three GET-only routes registered directly on WiFiManager's own WebServer
-// (_wcWm->server) — separate from its param/save form, since these need no
-// input. Link-driven throughout so a tap on a phone works with no JS, and
-// nothing happens without the explicit /update/apply tap: check-then-confirm,
-// never a silent reflash of a device an unattended, non-technical user relies on.
-static const char WC_UPDATE_STYLE[] =
-    "<style>body{background:#111;color:#eee;font-family:sans-serif;padding:1em}"
-    "a{color:#0c8}h3{color:#0c8}.warn{opacity:.75}"
-    "pre{white-space:pre-wrap;background:#000;padding:.5em;border:1px solid #0a7}</style>";
-
-static void wcSendPage(const String& bodyHtml) {
-    String html = "<!doctype html><html><head><title>Firmware Update</title>";
-    html += WC_UPDATE_STYLE;
-    html += "</head><body>";
-    html += bodyHtml;
-    html += "</body></html>";
-    _wcWm->server->send(200, "text/html", html);
-}
-
-static String wcHtmlEscape(const char* s) {
-    String out;
-    for (const char* p = s; *p; p++) {
-        switch (*p) {
-            case '<':  out += "&lt;";  break;
-            case '>':  out += "&gt;";  break;
-            case '&':  out += "&amp;"; break;
-            default:   out += *p;
-        }
-    }
-    return out;
-}
-
-static void wcHandleUpdatePage() {
-    String body = "<h3>Firmware Update</h3>";
-    body += "<p>Current version: v" + String(otaCurrentVersion()) + "</p>";
-    body += "<p><a href='/update/check'>Check for updates</a></p>";
-    body += "<p><a href='/'>&larr; Back to settings</a></p>";
-    wcSendPage(body);
-}
-
-static void wcHandleUpdateCheck() {
-    char latest[16];
-    if (!otaCheckLatestVersion(latest, sizeof(latest))) {
-        String body = "<h3>Firmware Update</h3>";
-        body += "<p>Couldn't check for updates: " + wcHtmlEscape(otaLastError()) + "</p>";
-        body += "<p><a href='/update'>Try again</a></p>";
-        wcSendPage(body);
-        return;
-    }
-
-    if (strcmp(latest, otaCurrentVersion()) == 0) {
-        String body = "<h3>Firmware Update</h3>";
-        body += "<p>You're up to date (v" + String(otaCurrentVersion()) + ").</p>";
-        body += "<p><a href='/update'>&larr; Back</a></p>";
-        wcSendPage(body);
-        return;
-    }
-
-    String body = "<h3>Firmware Update</h3>";
-    char notes[512];
-    if (otaFetchChangelog(notes, sizeof(notes))) {
-        body += "<h3>What's new in v" + String(latest) + "</h3>";
-        body += "<pre>" + wcHtmlEscape(notes) + "</pre>";
-    }
-    body += "<p>Update available: v" + String(latest) + " (you have v" +
-            String(otaCurrentVersion()) + ")</p>";
-    body += "<p class='warn'>Takes about a minute. The device restarts on its own "
-            "when done &mdash; don't power it off.</p>";
-    body += "<p><a href='/update/apply'>Update now</a></p>";
-    body += "<p><a href='/update'>&larr; Back</a></p>";
-    wcSendPage(body);
-}
-
-static void wcHandleUpdateApply() {
-    if (otaPerformUpdate()) {
-        wcSendPage("<h3>Updating&hellip;</h3><p>Installed. Rebooting now.</p>");
-        delay(500);   // let the response above flush before the reboot cuts the connection
-        ESP.restart();
-        return;
-    }
-
-    String body = "<h3>Update failed</h3>";
-    body += "<p>" + wcHtmlEscape(otaLastError()) + "</p>";
-    body += "<p><a href='/update/check'>Try again</a></p>";
-    wcSendPage(body);
-}
-
 void startWebConfig() {
     if (_wcActive || WiFi.status() != WL_CONNECTED) {
         Serial.printf("[WebConfig] not starting (active=%d wifi=%d)\n",
@@ -692,7 +603,9 @@ void startWebConfig() {
         "<h3>Home location &amp; favourites</h3>"
         "<p style='opacity:.75'>Saved straight to the device &mdash; no restart needed. "
         "Leave a favourite's name blank to clear that slot.</p>"
-        "<p><a href='/update'>Check for Firmware Updates</a></p>");
+        "<p>Flash new firmware: connect the device by USB and open "
+        "<a href='" FLASH_PAGE_URL "' target='_blank'>" FLASH_PAGE_URL "</a> "
+        "in Chrome or Edge.</p>");
     _wcPlace = new WiFiManagerParameter(
         "place", "Place name (e.g. Berlin) - overrides the coordinates below", "", 48);
     _wcLat = new WiFiManagerParameter("home_lat", "Home latitude",  latStr, 15);
@@ -751,10 +664,6 @@ void startWebConfig() {
                   _wcWm->getParametersCount(), (unsigned)strlen(_wcCfgHtml));
     _wcWm->startWebPortal();
     _wcActive = true;
-
-    _wcWm->server->on("/update",       HTTP_GET, wcHandleUpdatePage);
-    _wcWm->server->on("/update/check", HTTP_GET, wcHandleUpdateCheck);
-    _wcWm->server->on("/update/apply", HTTP_GET, wcHandleUpdateApply);
 
     if (MDNS.begin(WC_HOSTNAME)) {
         MDNS.addService("http", "tcp", 80);

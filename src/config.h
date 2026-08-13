@@ -8,19 +8,19 @@
 // Shown as the title of the web config page.
 #define PRODUCT_NAME   "Frank's Flight Radar"
 
-// ── Firmware version & OTA ───────────────────────────────────────────────────
-// Bump on every release meant to be offered as an update. CI extracts this
-// exact string at build time and publishes it as site/firmware/version.txt —
-// this define is the single source of truth; CHANGELOG.md must carry a
-// matching "## X.Y" entry or the CI build fails (see .github/workflows/docs.yml).
+// ── Firmware version ─────────────────────────────────────────────────────────
+// Bump on every release worth flashing. Purely a human-readable label now
+// (shown in the web config page) — docs/changelog.md must carry a matching
+// "## X.Y" entry or the CI build fails (see .github/workflows/docs.yml), so
+// there's always release notes to go with it.
 #define FIRMWARE_VERSION  "1.0"
 
-// Hosted on the same GitHub Pages deploy as the docs site — never a second,
-// separately-triggered deploy, since actions/deploy-pages fully replaces the
-// site on every run and two independent deploys would race each other.
-#define OTA_VERSION_URL   "https://pharcyd3.github.io/flight-radar/firmware/version.txt"
-#define OTA_FIRMWARE_URL  "https://pharcyd3.github.io/flight-radar/firmware/firmware.bin"
-#define OTA_CHANGELOG_URL "https://pharcyd3.github.io/flight-radar/firmware/changelog.txt"
+// Firmware is flashed over USB via a browser (Web Serial + esp-web-tools),
+// not downloaded and self-applied over WiFi — this no-PSRAM board doesn't
+// have enough contiguous heap to run a TLS download and Update.begin()'s
+// flash-write buffer at the same time (see docs/development.md). Hosted on
+// the same GitHub Pages deploy as the docs site.
+#define FLASH_PAGE_URL  "https://pharcyd3.github.io/flight-radar/flash/"
 
 // WiFi and home location are configured on first boot via the captive portal
 // (connect to the "Franks-Flight-Radar-Setup" AP, open 192.168.4.1 in a

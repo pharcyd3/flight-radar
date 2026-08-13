@@ -47,7 +47,14 @@ jobs:
       - name: Build firmware
         run: pio run -e m5dial
 
-      - name: Extract FIRMWARE_VERSION and matching changelog entry
+      # esp-web-tools (the browser flasher on the Flash Firmware page) wants
+      # one binary at offset 0 rather than the bootloader/partition-table/
+      # boot_app0/app quartet at their individual offsets — PlatformIO
+      # already merges exactly that into firmware.factory.bin during the
+      # build above, so publishing it (instead of assembling the four parts
+      # and their offsets ourselves) can't drift from what the board actually
+      # needs even if the partition table changes later.
+      - name: Publish firmware + manifest for browser flashing
         run: |
           VERSION=$(grep -oP '#define\s+FIRMWARE_VERSION\s+"\K[^"]+' src/config.h)
           if [ -z "$VERSION" ]; then
@@ -59,12 +66,22 @@ jobs:
             exit 1
           fi
           mkdir -p site/firmware
-          cp .pio/build/m5dial/firmware.bin site/firmware/firmware.bin
-          printf '%s' "$VERSION" > site/firmware/version.txt
-          awk -v ver="$VERSION" '
-            /^## / { if (found) exit; if ($2 == ver) { found=1; next } }
-            found { print }
-          ' docs/changelog.md > site/firmware/changelog.txt
+          cp .pio/build/m5dial/firmware.factory.bin site/firmware/firmware.factory.bin
+          cat > site/firmware/manifest.json <<EOF
+          {
+            "name": "Frank's Flight Radar",
+            "version": "$VERSION",
+            "new_install_prompt_erase": false,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "firmware.factory.bin", "offset": 0 }
+                ]
+              }
+            ]
+          }
+          EOF
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -64,4 +64,5 @@ nav:
     - Troubleshooting: troubleshooting.md
     - Building From Source: development.md
     - Changelog: changelog.md
+    - Flash Firmware: flash.md
     - Credits & License: credits.md
