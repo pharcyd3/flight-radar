@@ -6,10 +6,14 @@
 #include <esp_system.h>
 
 static volatile uint32_t   _heartbeat = 0;
+static volatile bool       _suspended = false;
 static const uint32_t      CHECK_MS   = 3000;    // how often the monitor task checks
 static const uint32_t      STALL_MS   = 60000;   // reset after this long with no progress
 
 void watchdogFeed() { _heartbeat++; }
+
+void watchdogSuspend() { _suspended = true; }
+void watchdogResume()  { _heartbeat++; _suspended = false; }
 
 // Runs on the other core, so it keeps checking even while the loop task is blocked
 // inside a wedged network call. If the heartbeat hasn't advanced for STALL_MS, the
@@ -19,6 +23,11 @@ static void watchdogTask(void*) {
     uint32_t stalled = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(CHECK_MS));
+        if (_suspended) {
+            last    = _heartbeat;
+            stalled = 0;
+            continue;
+        }
         if (_heartbeat != last) {
             last = _heartbeat;
             stalled = 0;

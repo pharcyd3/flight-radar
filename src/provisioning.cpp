@@ -3,6 +3,7 @@
 #include "map.h"
 #include "geolocate.h"
 #include "settings.h"
+#include "watchdog.h"
 #include <M5Dial.h>
 #include <WiFiManager.h>
 #include <ESPmDNS.h>
@@ -241,7 +242,13 @@ void runProvisioning() {
 
     showConnectingScreen();
 
+    // autoConnect() blocks for minutes waiting on the captive portal (its own
+    // setConfigPortalTimeout() above bounds it) — without this, that legitimate
+    // wait looks identical to a wedged loop and the software watchdog reboots
+    // the device out from under the setup screen every ~60s.
+    watchdogSuspend();
     bool connected = wm.autoConnect(SETUP_AP_SSID);
+    watchdogResume();
     prefs.end();
 
     if (!connected) {
@@ -368,7 +375,12 @@ void runLocationPortal() {
     wm.setConfigPortalTimeout(180);  // 3 min before giving up and reconnecting
 
     showConnectingScreen();
+    // Same reasoning as autoConnect() in runProvisioning(): this blocks for
+    // minutes (bounded by setConfigPortalTimeout() above), which would
+    // otherwise look like a hang to the software watchdog.
+    watchdogSuspend();
     wm.startConfigPortal(SETUP_AP_SSID);
+    watchdogResume();
     prefs.end();
 
     for (int i = 0; i < FAV_COUNT; i++) {

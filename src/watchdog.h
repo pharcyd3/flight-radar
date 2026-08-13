@@ -11,3 +11,14 @@
 // legitimate slow work isn't mistaken for a hang.
 void watchdogBegin();
 void watchdogFeed();
+
+// For a blocking call we can't instrument with watchdogFeed() ourselves —
+// namely WiFiManager's captive portal (autoConnect()/startConfigPortal()),
+// which loops internally for minutes waiting on user input. Without this,
+// that internal loop looks identical to a genuine hang and the device
+// reboots every ~60s, tearing down the AP mid-setup. Safe to blind the
+// watchdog for exactly that span because WiFiManager has its own
+// setConfigPortalTimeout() bounding it independently; resume immediately
+// after so normal operation stays protected the rest of the time.
+void watchdogSuspend();
+void watchdogResume();
