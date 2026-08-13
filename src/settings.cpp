@@ -5,6 +5,7 @@
 #include "lofimap.h"
 #include "map.h"
 #include "encoder_debounce.h"
+#include "watchdog.h"
 #include <M5Dial.h>
 #include <WiFi.h>
 #include <Preferences.h>
@@ -23,7 +24,7 @@ struct SettingsState {
     uint8_t map           = MAP_LOFI;  // Full/Lo-fi/Off    — default Lo-fi
     uint8_t refresh       = REFRESH_DEFAULT;
     uint8_t buzzEmergency = 0;  // On/Off                  — 0 = On (matches prior default true)
-    uint8_t iconStyle     = 0;  // Dot/Plane                — 0 = Dot
+    uint8_t iconStyle     = 1;  // Dot/Plane                — default: Plane
 };
 static SettingsState _s;
 
@@ -64,7 +65,11 @@ void loadSettings() {
     // every device the new 8 s default rather than reinterpreting an old index.
     _s.refresh       = prefs.getUChar("s_refresh3", REFRESH_DEFAULT);
     _s.buzzEmergency = prefs.getUChar("s_buzz",    0);
-    _s.iconStyle     = prefs.getUChar("s_icon",    0);
+    // Key bumped to "s_icon2": default is now the plane icon, not the dot.
+    // Bumping the key flips already-provisioned devices to the new default
+    // too, rather than reading back their old saved "0" forever — same
+    // reasoning as the "s_map3"/"s_refresh3" bumps above.
+    _s.iconStyle     = prefs.getUChar("s_icon2",   1);
     prefs.end();
 }
 
@@ -81,7 +86,7 @@ static void saveSettings() {
     prefs.putUChar("s_map3",   _s.map);
     prefs.putUChar("s_refresh3",_s.refresh);
     prefs.putUChar("s_buzz",   _s.buzzEmergency);
-    prefs.putUChar("s_icon",  _s.iconStyle);
+    prefs.putUChar("s_icon2", _s.iconStyle);
     prefs.end();
 }
 
@@ -382,6 +387,7 @@ static void runLocationPicker(RadarDisplay& radar, const std::vector<Aircraft>& 
     unsigned long lastActivity = millis();
 
     while (true) {
+        watchdogFeed();   // this whole screen blocks — don't let it look like a hang
         M5Dial.update();
 
         int delta;
@@ -455,6 +461,7 @@ static void runFactoryResetConfirm(RadarDisplay& radar, const std::vector<Aircra
     delay(50);
 
     while (true) {
+        watchdogFeed();   // this whole screen blocks — don't let it look like a hang
         M5Dial.update();
 
         bool down = M5Dial.BtnA.isPressed();
@@ -528,6 +535,7 @@ static void drawSetLocationOverlay(float lat, float lon, float km, const char* c
 static void runFavSlotChooser(float lat, float lon) {
     auto& d = M5Dial.Display;
     while (true) {
+        watchdogFeed();   // this whole screen blocks — don't let it look like a hang
         M5Dial.update();
 
         d.fillRoundRect(30, 66, 180, 108, 8, S_OVERLAY);
@@ -589,6 +597,7 @@ static void runSetLocation(RadarDisplay& radar) {
     unsigned long lastActivity = millis();
 
     while (true) {
+        watchdogFeed();   // this whole screen blocks — don't let it look like a hang
         M5Dial.update();
 
         // Dial: zoom the pan view (finer as you turn one way).
@@ -696,6 +705,7 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
     unsigned long lastTickMs   = millis();
 
     while (true) {
+        watchdogFeed();   // this whole screen blocks — don't let it look like a hang
         M5Dial.update();
 
         int delta;
