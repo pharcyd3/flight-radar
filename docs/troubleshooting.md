@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Start by **tapping the poll icon** at the bottom of the radar screen — the API status panel it opens tells you exactly what the last request did (HTTP code, response size, a short reason, and how long ago it happened). Most of the issues below are diagnosable from that panel alone.
+Start by **tapping the poll sweep** at the bottom of the radar screen (or **Settings → API status** if you've turned the sweep off) — the API status panel it opens tells you exactly what the last request did (HTTP code, response size, a short reason, and how long ago it happened). Most of the issues below are diagnosable from that panel alone.
 
 ## No aircraft showing
 

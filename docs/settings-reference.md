@@ -95,7 +95,7 @@ There's no account, credit, or quota system to manage — pick whichever feels r
 
 | Value | Behaviour |
 |---|---|
-| **On** *(default)* | An emergency squawk (7500/7600/7700) triggers a flashing red ring around the screen bezel and three audible tones |
+| **On** *(default)* | An emergency squawk (7500/7600/7700) makes the device follow that aircraft automatically, and triggers ten flashes of a red ring around the screen bezel with matching tones |
 | Off | Emergency aircraft are still highlighted visually on the radar, but silently |
 
 See [Emergency Alerts](emergency-alerts.md) for details.
@@ -110,6 +110,25 @@ How each aircraft is drawn on the radar.
 | **Plane** *(default)* | A small triangle whose nose points along the aircraft's track, so direction is readable from the shape itself — no separate arrow is drawn |
 
 Both styles use the same colour coding (airborne / on-ground / selected / emergency) and the same size increase for the selected aircraft.
+
+## Poll sweep
+
+The small ring near the bottom of the radar screen, with a segment travelling continuously round it.
+
+| Value | Behaviour |
+|---|---|
+| **On** *(default)* | The sweep is shown. Tapping it opens the [API status panel](#api-status) |
+| Off | The sweep is hidden entirely, and taps in that area select aircraft as normal |
+
+The sweep is driven by the clock rather than by the refresh schedule, so it turns at a constant rate no matter what the network is doing. That is deliberate: a fetch takes a large and variable share of each interval, so anything trying to count down to the next poll spends much of its time apparently frozen. Steady motion means the device is alive; a sweep that has stopped means it is genuinely stuck.
+
+Its colour still reports the feed's health — normal when idle, brighter while a request is in flight, and red if the last request failed.
+
+## API status
+
+Opens the same panel you get by tapping the poll sweep: whether the last request succeeded, its HTTP status code and response size, a short reason if it failed, and how long ago it happened. Tap anywhere to dismiss.
+
+This menu entry exists so the panel stays reachable when **Poll sweep** is switched off and there's no icon left to tap. See [Troubleshooting](troubleshooting.md).
 
 ## Set location
 

@@ -5,7 +5,7 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 ## Live radar display
 
 - **Real ADS-B traffic** from [airplanes.live](https://airplanes.live/)'s free community network, plotted by position around a home location you choose.
-- **Six zoom ranges** — 10, 25, 50, 100, 200, and 400&nbsp;km radius, selected with the rotary encoder. A row of dots near the top shows the current level at a glance. 400&nbsp;km is the widest that still fetches everything it displays: the data API caps its radius at 250&nbsp;nm, so a wider step would show an outer band that merely *looked* empty.
+- **Six zoom ranges** — 10, 25, 50, 100, 200, and 400&nbsp;km radius, selected with the rotary encoder. A row of dots near the top shows the current level at a glance. Traffic is queried out to roughly 185&nbsp;km regardless of the step, so the two widest views show the nearer traffic on a wider canvas rather than filling the outer ring — see [Data & connectivity](#data--connectivity) for why.
 - **Nearest-first** — when more aircraft are in range than the device can hold, it keeps the closest ones rather than whichever arrived first in the response.
 - **Smooth motion (dead reckoning)** — between polls, airborne aircraft *glide* along their heading at their reported ground speed instead of jumping on each refresh. Position is extrapolated for up to two minutes, so a missed poll never flings a stale mark across the screen.
 - **Heading arrows** — moving aircraft show a short arrow in their direction of travel.
@@ -16,7 +16,7 @@ An exhaustive tour of what Frank's Flight Radar does, grouped by area. Each item
 - **Callsign labels** — show none, only the selected aircraft, or all of them.
 - **Range rings** — three concentric rings with an **N** tick and distance labels (toggleable).
 - **Battery gauge** — a discreet cell at the top right showing charge level, amber below 30% and red below 10%, with a charging bolt while plugged in. Shown only on hardware that reports battery state; the M5Dial does not, so it stays hidden there.
-- **Poll icon** — a small ring that counts down to the next refresh, goes solid while a request is in flight, and turns solid red if the last request failed.
+- **Poll sweep** — a small ring near the bottom of the screen with a segment sweeping continuously round it. It's driven by the clock rather than the refresh schedule, so it never stalls mid-cycle: if it's turning, the device is alive. Its colour carries the feed's health — normal, bright while a request is in flight, red if the last one failed. Can be switched off under Settings → Poll sweep.
 
 See [Using the Device](using-the-device.md).
 
@@ -55,9 +55,10 @@ Supporting behaviour:
 - **Keyless flight data** — [airplanes.live](https://airplanes.live/)'s free community ADS-B API. No account, no API key, nothing to configure.
 - **Selectable refresh rate** — 5/8/15/30&nbsp;s, default 8&nbsp;s (well inside airplanes.live's fair-use guidance).
 - **Off-thread fetching** — the network request runs on its own core, so the dial and touchscreen stay fully responsive even when the connection is slow or dropping.
-- **Failure tolerance** — a failed poll keeps the last known traffic on screen (marks keep dead-reckoning) rather than blanking the radar, with the poll icon red; the next scheduled poll retries.
-- **API status panel** — tap the poll icon for the last request's outcome, HTTP code, payload size, and age.
+- **Failure tolerance** — a failed poll keeps the last known traffic on screen (marks keep dead-reckoning) rather than blanking the radar, with the poll sweep red; the next scheduled poll retries. If a feed that was working stops landing anything for five minutes, the device restarts itself for a clean heap.
+- **API status panel** — tap the poll sweep (or use Settings → API status) for the last request's outcome, HTTP code, payload size, and age.
 - **Memory-safe fetching** — large responses stream via a flash scratch file and parse one aircraft at a time, so the no-PSRAM device never runs out of RAM.
+- **Bounded query radius** — traffic is requested out to about 185&nbsp;km however far the display is zoomed. Response size grows with the *square* of the radius: measured over UK airspace, 100&nbsp;km returns ~13&nbsp;KB but 400&nbsp;km returns ~150&nbsp;KB, which took around five seconds to transfer and parse — longer than the refresh interval itself, so the data was stale before it arrived. Nearly all of it was discarded anyway, since the device holds a fixed number of aircraft and keeps the nearest. Capping the query keeps the widest views responsive, at the cost of showing traffic within that radius rather than out to the ring.
 - **WiFi auto-reconnect** — reconnects automatically if the connection drops.
 
 ## Display & personalisation

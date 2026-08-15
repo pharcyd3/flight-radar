@@ -1240,6 +1240,13 @@ void RadarDisplay::drawPollIcon(bool fetching) {
     // turns whenever the device is alive, so a stopped sweep now means something
     // genuinely wedged rather than merely a slow poll. Colour still carries the
     // feed's health, which is the part actually worth glancing at.
+    //
+    // Opaque disc behind the ring first. drawArc only paints between ICON_R0 and
+    // ICON_R, leaving the middle transparent — so without this, whatever the last
+    // full composite left underneath stayed visible inside the icon and made it
+    // look like it had debris in it. Same dark-halo treatment the home and
+    // recentre icons already use, so it reads as one solid element over the map.
+    d.fillCircle(ICON_X, ICON_Y, ICON_R, COL_HALO);
     d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, 0, 360, COL_RING);   // dim track
 
     uint16_t col = apiFailed(apiStatus().state) ? COL_HOME      // feed unhealthy

@@ -17,7 +17,7 @@ Frank's Flight Radar has three inputs: the **rotary encoder** (twist and press),
     - **Red, with an extra ring** — squawking an emergency code (7500/7600/7700); see [Emergency Alerts](emergency-alerts.md)
 - Aircraft **glide smoothly** between refreshes rather than jumping — their positions are dead-reckoned from heading and speed, so motion looks continuous even between polls.
 - A small **battery gauge** appears at the top right *on hardware that reports battery state*: an outline that fills in proportion to charge, turning amber below 30% and red below 10%, with a bolt through it while charging. The M5Dial does not expose battery voltage to its processor, so nothing is shown there — see [Building From Source](development.md) for the measurements behind that.
-- A small **poll icon** sits near the bottom of the screen: a shrinking ring counts down to the next automatic refresh, a solid ring means a request is in flight, and a **solid red ring** means the last request failed.
+- A small **poll sweep** sits near the bottom of the screen: a segment travels continuously round a dim ring. It's driven by the clock, not the refresh schedule, so it keeps turning steadily whatever the network is doing — a sweep that has stopped means the device itself is stuck, which is the thing actually worth noticing. Its colour tells you the feed's health: normal when idle, **bright** while a request is in flight, and **red** if the last request failed. Turn it off under **Settings → Poll sweep**.
 
 ## Rotary encoder: zoom
 
@@ -77,7 +77,7 @@ While browsing, the display uses the offline [lo-fi map](map-caching.md#the-lo-f
 
 ## Touch: check API status
 
-**Tap the poll icon** (bottom of the screen) to open the **API status panel** — this shows whether the last request succeeded, the HTTP status code and response size, a short reason on failure, and how long ago it happened. Tap anywhere to dismiss it. This is the fastest way to check *why* aircraft aren't showing — see [Troubleshooting](troubleshooting.md).
+**Tap the poll sweep** (bottom of the screen), or choose **Settings → API status**, to open the **API status panel** — this shows whether the last request succeeded, the HTTP status code and response size, a short reason on failure, and how long ago it happened. Tap anywhere to dismiss it. This is the fastest way to check *why* aircraft aren't showing — see [Troubleshooting](troubleshooting.md).
 
 ![The API status panel](images/api-status.png)
 

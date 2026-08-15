@@ -13,7 +13,7 @@
 // (shown in the web config page) — docs/changelog.md must carry a matching
 // "## X.Y" entry or the CI build fails (see .github/workflows/docs.yml), so
 // there's always release notes to go with it.
-#define FIRMWARE_VERSION  "1.0"
+#define FIRMWARE_VERSION  "1.1"
 
 // Firmware is flashed over USB via a browser (Web Serial + esp-web-tools),
 // not downloaded and self-applied over WiFi — this no-PSRAM board doesn't
@@ -36,10 +36,11 @@
 #define DEFAULT_HOME_LON   -0.1f
 
 // ── Zoom levels (km radius) ──────────────────────────────────────────────────
-// 400 km is the widest that still fetches everything it shows: the API's radius
-// argument is capped at 250 nm (463 km), and 400 km is 216 nm. A 500 km step
-// would be clipped to the cap, so the outer part of the view would be silently
-// empty of traffic rather than genuinely quiet.
+// The two widest steps show traffic out to FETCH_MAX_RADIUS_NM rather than to
+// the edge of the ring — see the note there. This used to say 400 km was the
+// widest step that still fetched everything it displayed (the API's own radius
+// argument caps at 250 nm, and 400 km is 216 nm), which was true until response
+// size at that radius turned out to be the thing making the widest views crawl.
 static const float ZOOM_STEPS[]  = { 10.0f, 25.0f, 50.0f, 100.0f, 200.0f, 400.0f };
 static const int   ZOOM_COUNT    = 6;
 static const int   ZOOM_DEFAULT  = 1;   // start at 25 km
