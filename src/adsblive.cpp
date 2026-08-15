@@ -346,16 +346,24 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     rf.close();
     LittleFS.remove(JSON_TMP);
 
-    if (err && out.empty()) {
+    // A mid-stream parse failure means the body was truncated: the array's
+    // closing ']' is detected before deserialising, so `err` can only mean the
+    // response was cut short. Publishing what was salvaged replaces a complete
+    // picture with a fragment of it — observed live as 55 aircraft dropping to
+    // 11 and back, which reads as traffic vanishing. Fail the poll instead and
+    // the feed keeps the last good set (see aircraftfeed.cpp) until one
+    // completes.
+    if (err) {
         char msg[48];
-        snprintf(msg, sizeof(msg), "JSON: %s", err.c_str());
+        snprintf(msg, sizeof(msg), "Truncated: %d ac", (int)out.size());
         setApiStatus(ApiState::ParseError, code, size, msg);
+        Serial.printf("[AdsbLive] truncated body, discarding %d aircraft\n", (int)out.size());
+        out.clear();
         return false;
     }
-
     char msg[48];
     snprintf(msg, sizeof(msg), "%d aircraft", (int)out.size());
     setApiStatus(ApiState::Ok, code, size, msg);
-    Serial.printf("[AdsbLive] Parsed %d aircraft%s\n", (int)out.size(), err ? " (partial)" : "");
+    Serial.printf("[AdsbLive] Parsed %d aircraft\n", (int)out.size());
     return true;
 }

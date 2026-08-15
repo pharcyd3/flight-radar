@@ -25,6 +25,12 @@ void webConfigLoop();
 // nullptr if the portal isn't running (no WiFi).
 const char* webConfigAddress();
 
+// Called by the web config when the home location changes, so the radar can
+// drop any browse offset and refetch straight away — a save that doesn't
+// visibly move the view reads as a save that didn't work. Defined in main.cpp,
+// which owns that state.
+void webConfigHomeApplied();
+
 // Settings-menu action: approximate and set home from the device's public IP
 // (no typing). Draws its own progress/result screens. Returns true if a new home
 // was set. Assumes the device is online.

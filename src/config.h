@@ -79,6 +79,13 @@ static inline long encoderDetent(long rawTicks) {
 // a fast human detent, so it never throttles genuine input.
 static const unsigned long ENC_MIN_STEP_MS = 25UL;
 
+// How far the finger must travel before a touch counts as a drag rather than a
+// tap. This was 6 px, which is less than a normal fingertip rolls while tapping
+// a 240 px screen — so almost every tap was being classified as a drag, the
+// selection never fired, and the view crept about instead. Well clear of that,
+// still far short of a deliberate swipe.
+static const int TOUCH_DRAG_PX = 18;
+
 // How long after the last zoom step to wait before re-fetching at the new
 // radius. The fetch itself is off-thread (see aircraftfeed.h) so this costs no
 // interactivity — it purely avoids firing one API request per intermediate

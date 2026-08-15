@@ -426,6 +426,13 @@ static void checkEmergency() {
 // away. No-op if one is already in flight. The poll icon picks up the "in
 // flight" look from feed::busy() on the next scheduled redraw, so there's no
 // need to force an extra full-frame composite here.
+// See provisioning.h — the web config calls this after changing home.
+void webConfigHomeApplied() {
+    browsing    = false;   // otherwise the view stays wherever it was dragged
+    lastFetchMs = 0;       // refetch around the new home on the next loop
+    redraw();
+}
+
 static void startFetch() {
     // Give the fetch the biggest contiguous heap this no-PSRAM board can
     // offer: release the map's PNG decode buffer if it's currently resident
@@ -780,7 +787,8 @@ void loop() {
             // Only count it as a drag once it's clearly past finger jitter,
             // or an ordinary tap would stop selecting aircraft.
             int tdx = touch.x - followTouchDownX, tdy = touch.y - followTouchDownY;
-            if (tdx * tdx + tdy * tdy > 36) followTouchDragged = true;
+            if (tdx * tdx + tdy * tdy > TOUCH_DRAG_PX * TOUCH_DRAG_PX)
+                followTouchDragged = true;
             if (followTouchDragged) {
                 browsePan(dx, dy);
                 selectedAc = -1;          // the old index means nothing over there

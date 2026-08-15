@@ -490,6 +490,7 @@ static WiFiManagerParameter* _wcFavLon [FAV_COUNT] = { nullptr };
 static bool _wcActive = false;
 static char _wcAddress[64] = "";
 static bool _wcApplyPending = false;   // set by the save callback, acted on in the loop
+static bool _wcHomeChanged  = false;   // home moved: recentre and refetch at once
 
 static const char WC_HOSTNAME[] = "flightradar";
 
@@ -561,8 +562,11 @@ static void wcSave() {
             prefs.putFloat("home_lat", _homeLat);
             prefs.putFloat("home_lon", _homeLon);
             prefs.putBool("home_set", true);
+            _wcHomeChanged = true;   // make the radar jump there, not wait a poll
+            Serial.printf("[WebConfig] home set to %.5f,%.5f\n", _homeLat, _homeLon);
         } else {
-            Serial.println("[WebConfig] Invalid home lat/lon, keeping previous value");
+            Serial.printf("[WebConfig] rejected home lat/lon '%s','%s' — keeping previous\n",
+                          _wcLat->getValue(), _wcLon->getValue());
         }
     }
 
@@ -711,11 +715,20 @@ void webConfigLoop() {
 
     // A typed place name geocodes here rather than in the request handler —
     // it blocks for seconds and would stall the web server mid-response.
+    if (_wcHomeChanged) {
+        _wcHomeChanged = false;
+        // A save that doesn't visibly do anything reads as a save that failed.
+        // Drop any browse offset and force a fetch so the radar is centred on
+        // the new home immediately rather than up to a refresh interval later.
+        webConfigHomeApplied();
+    }
+
     if (_pendingPlace[0]) {
         float glat, glon; char place[48] = "";
         showConnectingScreen();
         if (geocodeCity(_pendingPlace, glat, glon, place, sizeof(place))) {
             setHomeLocation(glat, glon);
+            webConfigHomeApplied();
             Serial.printf("[WebConfig] '%s' -> %.4f,%.4f\n", _pendingPlace, glat, glon);
         } else {
             Serial.printf("[WebConfig] could not geocode '%s'\n", _pendingPlace);

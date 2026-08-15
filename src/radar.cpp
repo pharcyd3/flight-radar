@@ -213,7 +213,9 @@ int RadarDisplay::hitTest(int tx, int ty,
         int sx, sy;
         acToScreen(aircraft[i], cLat, cLon, radiusKm, sx, sy);
         int dx = tx - sx, dy = ty - sy;
-        if ((dx * dx + dy * dy) <= 144) return i;  // 12 px hit radius
+        // Generous: the mark is ~5 px but a fingertip covers far more, and
+        // there is nothing else on the map to hit by mistake.
+        if ((dx * dx + dy * dy) <= 18 * 18) return i;
     }
     return -1;
 }
