@@ -25,6 +25,7 @@ struct SettingsState {
     uint8_t refresh       = REFRESH_DEFAULT;
     uint8_t buzzEmergency = 0;  // On/Off                  — 0 = On (matches prior default true)
     uint8_t iconStyle     = 1;  // Dot/Plane                — default: Plane
+    uint8_t pollIcon      = 0;  // On/Off                  — 0 = On
 };
 static SettingsState _s;
 
@@ -37,6 +38,7 @@ float minAltitudeM()          { return MIN_ALT_OPTIONS_M[_s.minalt]; }
 bool  showTrails()            { return _s.trails == 0; }
 bool  showRings()             { return _s.rings == 0; }
 int   aircraftIconStyle()     { return _s.iconStyle; }
+bool  showPollIcon()          { return _s.pollIcon == 0; }
 int   mapMode()               { return _s.map <= MAP_OFF ? _s.map : MAP_FULL; }
 void  setMapMode(int m)       { if (m >= 0 && m <= MAP_OFF) _s.map = (uint8_t)m; }
 unsigned long refreshIntervalMs() {
@@ -70,6 +72,7 @@ void loadSettings() {
     // too, rather than reading back their old saved "0" forever — same
     // reasoning as the "s_map3"/"s_refresh3" bumps above.
     _s.iconStyle     = prefs.getUChar("s_icon2",   1);
+    _s.pollIcon      = prefs.getUChar("s_poll",    0);
     prefs.end();
 }
 
@@ -87,6 +90,7 @@ static void saveSettings() {
     prefs.putUChar("s_refresh3",_s.refresh);
     prefs.putUChar("s_buzz",   _s.buzzEmergency);
     prefs.putUChar("s_icon2", _s.iconStyle);
+    prefs.putUChar("s_poll",  _s.pollIcon);
     prefs.end();
 }
 
@@ -164,7 +168,7 @@ enum class ItemKind : uint8_t { Cycle, Action, Danger };
 // MENU_ITEMS, so inserting any new action silently shifted every branch onto
 // the wrong handler.
 enum class MenuAction : uint8_t {
-    None, SetLocation, DetectLocation, LocationPortal, SavedLocations,
+    None, ApiStatus, SetLocation, DetectLocation, LocationPortal, SavedLocations,
     PowerOff, FactoryReset,
 };
 
@@ -251,6 +255,8 @@ static const MenuItem MENU_ITEMS[] = {
     { "Refresh rate",        ItemKind::Cycle,  OPTS_REFRESH, REFRESH_OPTION_COUNT, &_s.refresh , MenuAction::None },
     { "Buzz on Emergency",   ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.buzzEmergency , MenuAction::None },
     { "Aircraft icon",       ItemKind::Cycle,  OPTS_ICON,    2, &_s.iconStyle , MenuAction::None },
+    { "Poll sweep",          ItemKind::Cycle,  OPTS_ONOFF,   2, &_s.pollIcon , MenuAction::None },
+    { "API status",          ItemKind::Action, nullptr,      0, nullptr, MenuAction::ApiStatus },
     { "Set location",        ItemKind::Action, nullptr,      0, nullptr, MenuAction::SetLocation },
     { "Detect location",     ItemKind::Action, nullptr,      0, nullptr, MenuAction::DetectLocation },
     { "Web Config",          ItemKind::Action, nullptr,      0, nullptr, MenuAction::LocationPortal },
@@ -734,6 +740,11 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
             }
 
             switch (item.action) {
+                // Opens the status panel over the radar on the way out. It's
+                // also reachable by tapping the poll sweep, but that target
+                // doesn't exist when the sweep is switched off — so this is the
+                // route that always works.
+                case MenuAction::ApiStatus:      radar.setStatusVisible(true); break;
                 case MenuAction::SetLocation:    runSetLocation(radar); break;
                 case MenuAction::DetectLocation: runDetectLocation();   break;
                 case MenuAction::LocationPortal: runWebConfigInfo(radar, aircraft, homeLat, homeLon,

@@ -93,6 +93,12 @@ static const unsigned long ZOOM_FETCH_DEBOUNCE_MS = 350UL;
 // too low would start eating the input-sampling gaps.
 static const unsigned long ANIM_FRAME_MS = 200UL;
 
+// The poll icon's sweep is ticked independently of, and much faster than, the
+// radar frame above. It's a few pixels painted straight to the display rather
+// than a full 115 KB composite, so it costs almost nothing — and at the frame
+// rate alone the sweep would visibly step round in chunks instead of turning.
+static const unsigned long POLL_ICON_TICK_MS = 50UL;
+
 // Drop the aircraft set entirely if no fetch has succeeded for this long. A
 // failed fetch deliberately keeps the last good data on screen (a transient
 // blip shouldn't blank the radar), but past the dead-reckoning cap those marks

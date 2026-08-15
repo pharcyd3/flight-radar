@@ -1223,41 +1223,49 @@ void RadarDisplay::flashEmergencyRing() {
 }
 
 void RadarDisplay::drawPollIcon(bool fetching) {
+    if (!showPollIcon()) return;   // Settings → Poll sweep = Off
     auto& d = *_g;
 
-    // Dim track — full circle
-    d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, 0, 360, COL_RING);
+    // A rotating sweep, not a countdown.
+    //
+    // This used to drain an arc towards the next scheduled poll, and go solid
+    // for the whole time a request was in flight. That reads as broken, because
+    // a fetch is a large and *variable* slice of the interval — a wide-zoom poll
+    // can take seconds — so the ring sat motionless mid-cycle, and if a fetch ran
+    // longer than the interval the arc pinned at empty and stopped moving
+    // altogether. It was reporting the truth, but the truth is not something a
+    // countdown can express.
+    //
+    // A sweep driven by millis() instead of by the schedule can't freeze: it
+    // turns whenever the device is alive, so a stopped sweep now means something
+    // genuinely wedged rather than merely a slow poll. Colour still carries the
+    // feed's health, which is the part actually worth glancing at.
+    d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, 0, 360, COL_RING);   // dim track
 
-    if (fetching) {
-        // Solid bright ring while a request is in flight
-        d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, 0, 360, COL_SEL);
-        return;
-    }
+    uint16_t col = apiFailed(apiStatus().state) ? COL_HOME      // feed unhealthy
+                 : fetching                     ? COL_SEL       // request in flight
+                                                : COL_RING_LBL; // idle, healthy
 
-    // Last fetch failed (HTTP/JSON/network error or states:null) — solid red
-    // ring so a stalled feed is obvious at a glance. Tap it for the reason.
-    if (apiFailed(apiStatus().state)) {
-        d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, 0, 360, COL_HOME);
-        return;
-    }
-
-    // Otherwise, bright arc shrinks from full circle down to nothing as the
-    // next poll approaches. Measured from when the last fetch was *dispatched*
-    // (see setPollAnchor()), which is what the scheduler counts the interval
-    // from — so the arc now empties exactly as the next poll fires, instead of
-    // running out early by however long the previous fetch took.
-    unsigned long elapsed = millis() - _pollAnchorMs;
-    float fraction = (float)elapsed / (float)refreshIntervalMs();
-    if (fraction > 1.0f) fraction = 1.0f;
-    float remaining = 1.0f - fraction;
-
-    if (remaining > 0.01f) {
-        d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0,
-                  0, remaining * 360.0f, COL_RING_LBL);
+    // ~1 revolution per 1.4 s. The icon is a handful of pixels painted straight
+    // to the display, so it's ticked far faster than the radar composite (see
+    // POLL_ICON_TICK_MS in main.cpp) and the motion stays smooth.
+    const int len   = 80;                                   // sweep length, degrees
+    const int start = (int)((millis() / 4UL) % 360UL);
+    int end = start + len;
+    if (end <= 360) {
+        d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, start, end, col);
+    } else {
+        // Wrapped past 12 o'clock — draw it as two pieces.
+        d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, start, 360, col);
+        d.drawArc(ICON_X, ICON_Y, ICON_R, ICON_R0, 0, end - 360, col);
     }
 }
 
 bool RadarDisplay::hitPollIcon(int tx, int ty) const {
+    // Nothing drawn there when the sweep is off, so don't swallow the tap —
+    // it should fall through to ordinary aircraft selection. The status panel
+    // is still reachable from Settings → API status.
+    if (!showPollIcon()) return false;
     // Generous target — the icon itself is tiny and sits near the bottom bezel.
     int dx = tx - ICON_X, dy = ty - ICON_Y;
     return (dx * dx + dy * dy) <= (22 * 22);

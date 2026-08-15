@@ -943,6 +943,15 @@ void loop() {
         }
     }
 
+    // Keep the poll icon's sweep turning between radar frames. Cheap enough to
+    // run at this rate (a small direct-to-display arc, no composite), and it's
+    // what keeps the sweep reading as continuous motion rather than stepping.
+    static unsigned long lastIconMs = 0;
+    if (now - lastIconMs >= POLL_ICON_TICK_MS) {
+        lastIconMs = now;
+        radar.updatePollIcon(feed::busy());
+    }
+
     // ── Background map precache ────────────────────────────────────────────────
     // When the user's been idle a moment (and no fetch is in flight), cache one
     // more zoom level for the current home so future zoom changes are instant.
