@@ -211,6 +211,7 @@ static void stopFollow() {
 
 static void startFetch();   // forward declaration (defined below)
 
+
 // Streams the composited radar frame over serial (RGB565, row order) framed by
 // SHOT_BEGIN/SHOT_END markers, so a host script can rebuild a PNG. The whole
 // radar scene is composited into the map sprite (the GC9A01 panel can't be read

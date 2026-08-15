@@ -24,7 +24,14 @@ static const float KM_PER_NM = 1.852f;
 static size_t streamBodyToFile(HTTPClient& http, bool chunked, int contentLen, File& f) {
     Stream* stream = http.getStreamPtr();
     uint8_t buf[512];
-    unsigned long deadline = millis() + 9000;
+    // Hard ceiling on how long the body may take to arrive. This was 9 s, which
+    // is longer than the whole refresh interval: a response that stalled
+    // mid-transfer held the feed "in flight" for nine seconds, so the poll icon
+    // sat solid (no countdown) for most of a cycle and the aircraft set that
+    // finally landed was a truncated, different-every-time subset. Failing fast
+    // and letting the next scheduled poll retry is both quicker and steadier —
+    // a healthy response of this size lands in 1-2 s.
+    unsigned long deadline = millis() + BODY_READ_TIMEOUT_MS;
     size_t total = 0;
 
     if (chunked) {
@@ -89,6 +96,20 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     int radiusNm = (int)lroundf(radiusKm / KM_PER_NM);
     if (radiusNm < 1)   radiusNm = 1;
     if (radiusNm > 250) radiusNm = 250;
+
+    // Payload grows with the square of the radius, and the API returns every
+    // field for every aircraft. Measured over UK airspace: 54 nm returns ~13 KB,
+    // but 216 nm (the 400 km zoom step) returns ~150 KB — which costs ~3 s to
+    // stream to flash plus ~1.7 s to parse, so the poll icon sat showing "in
+    // flight" for five seconds at a time and the data was stale before it landed.
+    //
+    // Almost all of that is thrown away: the display holds MAX_AIRCRAFT and now
+    // keeps the nearest of them, so several hundred distant aircraft are parsed
+    // only to be evicted. Capping the *query* radius gets the same picture for a
+    // quarter of the bytes. It does mean the widest zoom shows traffic only
+    // within this cap rather than out to the ring — a deliberate trade of
+    // completeness at the outermost step for a responsive one.
+    if (radiusNm > FETCH_MAX_RADIUS_NM) radiusNm = FETCH_MAX_RADIUS_NM;
 
     char url[128];
     snprintf(url, sizeof(url), "https://api.airplanes.live/v2/point/%.4f/%.4f/%d",
@@ -197,19 +218,26 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
     const bool wantKeep = (keepIcao && keepIcao[0]);
     bool       gotKeep  = false;
 
-    // Once at the cap, reservoir-sample rather than always keeping the
-    // nearest: a 400 km query over busy airspace can return several hundred
-    // aircraft against a MAX_AIRCRAFT of 80 (that sizing assumed ~30 over a
-    // 200 km UK fetch — the 400 km step outgrew it), and "always keep
-    // nearest" converges on only ever showing a tight cluster around the
-    // centre, with the outer reaches of a wide zoom silently never
-    // populated. Reservoir sampling (Algorithm R) gives every candidate an
-    // equal chance of a surviving slot regardless of arrival order or
-    // distance, so the kept set is spread across whatever the query actually
-    // returned. It's also cheaper per candidate than the old scan-for-worst
-    // eviction (O(1) vs O(MAX_AIRCRAFT)), which was contributing to the
-    // sluggishness that made the clustering noticeable in the first place.
-    int keepSlot = -1;   // reservoir index holding the followed aircraft, once placed
+    // Once at the cap, keep the MAX_AIRCRAFT *nearest* the query centre.
+    //
+    // This replaced reservoir sampling (Algorithm R), which spread the kept set
+    // evenly across everything returned. That looked better in principle, but
+    // it re-rolls independently on every poll: over busy airspace a 400 km query
+    // returns several hundred candidates for 80 slots, so each poll surfaced a
+    // different random subset and traffic visibly popped in and out between
+    // refreshes — the picture never settled. Nearest-N is deterministic, so an
+    // aircraft that qualifies stays qualified from one poll to the next and only
+    // leaves when it genuinely flies out of range. A stable, coherent picture of
+    // the nearer traffic beats a uniformly-sampled one that flickers, and near
+    // traffic is what this radar is for.
+    //
+    // Cost is O(candidates x MAX_AIRCRAFT) in the worst case, which sounds worse
+    // than Algorithm R's O(1) but is a few tens of thousands of float compares —
+    // utterly lost next to the ~1.7 s the JSON parse itself takes at this size.
+    float d2Kept[MAX_AIRCRAFT];   // distance² (deg², planar) of each held slot
+    float cosCLat = cosf(centerLat * 0.0174532925f);
+    if (cosCLat < 0.05f) cosCLat = 0.05f;
+    int keepSlot = -1;   // slot holding the followed aircraft, once placed
     int seen      = 0;   // candidates considered so far, including the initial fill
 
     while (true) {
@@ -276,27 +304,42 @@ bool fetchAircraftAdsbLive(float centerLat, float centerLon, float radiusKm,
         const bool isKeep = wantKeep && !gotKeep &&
                             strncmp(ac.icao24, keepIcao, sizeof(ac.icao24)) == 0;
 
+        float dLat = ac.lat - centerLat;
+        float dLon = (ac.lon - centerLon) * cosCLat;
+        float d2   = dLat * dLat + dLon * dLon;
+
         if ((int)out.size() < MAX_AIRCRAFT) {
             if (isKeep) keepSlot = (int)out.size();
+            d2Kept[out.size()] = d2;
             out.push_back(ac);
             if (isKeep) gotKeep = true;
         } else if (isKeep) {
             // The followed aircraft always gets a seat, displacing whichever
-            // slot last happened to hold it (or slot 0 the first time this
-            // fires past the fill phase) — it must survive regardless of how
-            // far out it drifts or how the sampling below would have rolled.
-            int slot = (keepSlot >= 0) ? keepSlot : 0;
-            out[slot] = ac;
-            keepSlot  = slot;
-            gotKeep   = true;
+            // slot last happened to hold it (or the farthest one the first time
+            // this fires past the fill phase) — it must survive regardless of
+            // how far out it drifts.
+            int slot = keepSlot;
+            if (slot < 0) {
+                slot = 0;
+                for (int j = 1; j < MAX_AIRCRAFT; ++j)
+                    if (d2Kept[j] > d2Kept[slot]) slot = j;
+            }
+            out[slot]    = ac;
+            d2Kept[slot] = d2;
+            keepSlot     = slot;
+            gotKeep      = true;
         } else {
-            // Candidate `seen` (0-indexed, already >= MAX_AIRCRAFT here)
-            // replaces a uniformly-random held slot with probability
-            // MAX_AIRCRAFT / (seen + 1) — standard Algorithm R. Skips the
-            // protected slot rather than rebalancing around it; that slot
-            // effectively survives every round, which is exactly the point.
-            uint32_t j = esp_random() % (uint32_t)(seen + 1);
-            if ((int)j < MAX_AIRCRAFT && (int)j != keepSlot) out[(int)j] = ac;
+            // Evict the farthest held aircraft if this one is nearer. The
+            // protected follow slot is skipped so it can never be evicted.
+            int worst = -1;
+            for (int j = 0; j < MAX_AIRCRAFT; ++j) {
+                if (j == keepSlot) continue;
+                if (worst < 0 || d2Kept[j] > d2Kept[worst]) worst = j;
+            }
+            if (worst >= 0 && d2 < d2Kept[worst]) {
+                out[worst]    = ac;
+                d2Kept[worst] = d2;
+            }
         }
         seen++;
     }

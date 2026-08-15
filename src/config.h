@@ -142,6 +142,17 @@ static const int           REFRESH_DEFAULT      = 1;   // 8 s
 // adsblive.h's keepIcao.
 static const int MAX_AIRCRAFT = 80;
 
+// Largest radius (nautical miles) actually requested from the API, regardless of
+// how far out the display is zoomed. See the note in adsblive.cpp: response size
+// scales with the square of this, and past ~120 nm the device spends longer
+// fetching and parsing than the refresh interval itself. 120 nm ≈ 222 km.
+static const int FETCH_MAX_RADIUS_NM = 100;
+
+// How long the response body may take to arrive before the fetch is abandoned
+// and left to the next scheduled poll. Must stay comfortably under the shortest
+// refresh interval (5 s) or a stalled transfer keeps the feed permanently busy.
+static const unsigned long BODY_READ_TIMEOUT_MS = 3500UL;
+
 // ── Dead-reckoning interpolation ───────────────────────────────────────────────
 // Between polls (22 s apart on the authenticated cadence) a mark would otherwise
 // teleport to its next reported position. Instead we advance it along its own
