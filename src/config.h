@@ -13,7 +13,7 @@
 // (shown in the web config page) — docs/changelog.md must carry a matching
 // "## X.Y" entry or the CI build fails (see .github/workflows/docs.yml), so
 // there's always release notes to go with it.
-#define FIRMWARE_VERSION  "1.1"
+#define FIRMWARE_VERSION  "1.2"
 
 // Firmware is flashed over USB via a browser (Web Serial + esp-web-tools),
 // not downloaded and self-applied over WiFi — this no-PSRAM board doesn't

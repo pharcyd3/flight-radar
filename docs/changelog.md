@@ -6,6 +6,28 @@ and fails the build otherwise (see [Building From
 Source](development.md#cutting-a-release)). See [Flash
 Firmware](flash.md) to install a release.
 
+## 1.2
+
+Fixes for three faults that made the device feel broken in normal use.
+
+**Taps work again**
+
+- A touch was treated as a drag after only 6&nbsp;px of travel — less than a fingertip rolls while tapping a 240&nbsp;px screen. Almost every tap was therefore classified as a drag: nothing selected, and the view crept about instead. The threshold is now well clear of an ordinary tap.
+- Aircraft are easier to hit: the tap target grows from 12 to 18&nbsp;px. The mark itself is about 5&nbsp;px and a fingertip covers far more.
+
+**Traffic stays put**
+
+- A response that arrived truncated was still being published, replacing a complete picture with whatever fragment had parsed. Seen live as 55 aircraft dropping to 11 and back within three refreshes. Truncated polls are now discarded and the previous traffic stays on screen, with the status panel reporting `Truncated`.
+- This compounded the random-subset problem fixed in 1.1; together they were the cause of traffic appearing and disappearing.
+
+**Map → Full loads again**
+
+- Full was being suppressed for as long as the view sat anywhere other than home, not just while it was moving. Combined with the tap bug — which put the device into browse mode on almost any touch — the fallback to the offline map effectively latched on, and Full appeared simply not to work. It is now suppressed only while the view is genuinely in motion, so stopping somewhere loads the street map for wherever you landed.
+
+**Home from the web page**
+
+- Saving a home location from the web config stored it correctly but nothing moved the view, so it took effect silently up to a refresh interval later — and not at all if the view had been dragged elsewhere. Saving now recentres and refetches immediately. Both accepted and rejected coordinates are logged.
+
 ## 1.1
 
 Performance and stability pass, driven by on-device profiling.

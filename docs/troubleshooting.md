@@ -11,7 +11,7 @@ There are three distinct causes, and the status panel tells you which one you're
 - WiFi is connected (device reboots and re-shows the setup portal if it can't connect at boot)
 - The status panel's HTTP code — a `429` means you've momentarily outrun [airplanes.live](https://airplanes.live/)'s fair-use rate limit; it's keyless with no account or daily quota, so this clears on its own within a poll or two. If it happens often, switch to a slower **Refresh rate** (Settings menu).
 
-**Status shows "NO DATA"** — the request succeeded (HTTP 200) but airplanes.live returned no aircraft for your exact search radius. This is **not necessarily a bug**. airplanes.live is a free community-run ADS-B aggregator, not a commercial one — its coverage can be genuinely sparse in some areas, especially at small zoom radii. This is normal and expected occasionally; if it's the *only* thing you ever see even at maximum zoom (200&nbsp;km) over several minutes, it's worth double-checking there's actually traffic nearby via an independent source (e.g. [adsb.lol](https://adsb.lol/)) before assuming something's wrong on the device.
+**Status shows "NO DATA"** — the request succeeded (HTTP 200) but airplanes.live returned no aircraft for your exact search radius. This is **not necessarily a bug**. airplanes.live is a free community-run ADS-B aggregator, not a commercial one — its coverage can be genuinely sparse in some areas, especially at small zoom radii. This is normal and expected occasionally; if it's the *only* thing you ever see even at the widest zoom over several minutes, it's worth double-checking there's actually traffic nearby via an independent source (e.g. [adsb.lol](https://adsb.lol/)) before assuming something's wrong on the device.
 
 **Status shows "ONLINE" but the radar still looks empty** — check your **Traffic** and **Min altitude** filters (Settings menu) aren't hiding everything currently in range, and confirm you're not zoomed in tighter than where the traffic actually is.
 
@@ -31,9 +31,28 @@ Watch the serial console (115200 baud) for a `Guru Meditation Error` panic dump 
 
 If you hit a genuine crash loop, a full [factory reset](getting-started.md#resetting-later) (hold the encoder button 3 seconds) is a reasonable first recovery step, followed by re-flashing if that doesn't help.
 
+## Taps don't select aircraft, or the view drifts when you tap
+
+A touch only counts as a drag once your finger travels a fair distance; anything shorter is a tap. If taps seem to move the view instead of selecting, or nothing selects at all, you're on firmware older than 1.2 — that threshold used to be small enough that an ordinary fingertip roll was mistaken for a drag. [Update](flash.md).
+
+## Traffic appears and disappears between refreshes
+
+Aircraft that are genuinely in range should stay put from one poll to the next. If they visibly pop in and out, check the firmware version:
+
+- Before 1.1, the device kept a *random* subset when more aircraft were in range than it can hold, re-rolled every poll.
+- Before 1.2, a response that arrived truncated was still published, replacing a complete picture with whatever fragment had parsed.
+
+Both are fixed; [update](flash.md) if you're behind. On current firmware a truncated poll is discarded and the previous traffic stays on screen, with the status panel showing `Truncated`.
+
+## The Full map won't load
+
+**Map → Full** is suppressed while the view is in motion — following an aircraft, or mid-drag — because composing street tiles blocks the device for seconds and competes with the traffic fetch for memory. Stop moving and it will compose for wherever you've landed. The offline lo-fi map is used meanwhile.
+
+It can also lose a race with the flight-data fetch, which has priority for memory; it retries on the following frame, so a busy feed can delay it by a few seconds.
+
 ## Zoom or menu behaves oddly ("it jumps," "it flickers")
 
-The M5Dial's rotary encoder on this hardware exhibits occasional electrical noise — a genuine click and a spurious bounce can look identical at the raw signal level and are only distinguishable by timing. The firmware deliberately waits for a reading to settle before acting on it (longer for zoom, shorter for menu navigation), which should make one physical click reliably equal one step. If you still see inconsistent behaviour, it's worth reporting with a description of the exact sequence (which direction, how many clicks, what happened) since this is an active area of tuning.
+The M5Dial's rotary encoder on this hardware emits occasional spurious single ticks. The firmware only commits a step once the raw count has moved a full detent, so sub-detent noise is rejected outright rather than waited out — one physical click should reliably be one step, and steps register immediately. If you still see inconsistent behaviour, it's worth reporting with the exact sequence (which direction, how many clicks, what happened).
 
 ## Getting more detail
 
