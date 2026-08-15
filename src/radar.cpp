@@ -90,6 +90,22 @@ void RadarDisplay::begin() {
     M5Dial.Display.setTextDatum(MC_DATUM);
 }
 
+// Recompute the per-frame projection constants. Cheap (three trig calls) and
+// hit only when the centre or radius actually changes — i.e. once per frame,
+// not once per point. See the cache members in radar.h.
+void RadarDisplay::updateProjCache(float cLat, float cLon, float radiusKm) {
+    const float RAD = (float)M_PI / 180.0f;
+    _pjCLat     = cLat;
+    _pjCLon     = cLon;
+    _pjRadiusKm = radiusKm;
+    float p0    = cLat * RAD;
+    _pjSinLat0  = sinf(p0);
+    _pjCosLat0  = cosf(p0);
+    // Folds EARTH_R (km per radian of arc) and the km→pixel scale into one
+    // multiply, replacing the old per-point `EARTH_R * x / radiusKm * PLOT_R`.
+    _pjPxPerRad = EARTH_R * (float)PLOT_R / radiusKm;
+}
+
 void RadarDisplay::worldToScreen(float lat, float lon,
                                   float cLat, float cLon, float radiusKm,
                                   int& sx, int& sy) {
@@ -99,27 +115,41 @@ void RadarDisplay::worldToScreen(float lat, float lon,
     // small distances of normal zoom it is numerically identical to a flat
     // lat/lon projection, but unlike that flat approximation it stays correct all
     // the way out to a whole-earth view (used by follow mode's extended zoom).
-    const float RAD = (float)M_PI / 180.0f;
-    float p0 = cLat * RAD, l0 = cLon * RAD;
-    float p  = lat  * RAD, dl = (lon - cLon) * RAD;
+    //
+    // This is *the* hot path: the lo-fi vector map calls it once per polyline
+    // vertex, so it used to spend eight transcendental calls (sinf/cosf of the
+    // centre latitude — identical for every point in the frame — plus acosf and
+    // sinf for the k factor) on work that is either frame-invariant or
+    // negligible at normal zoom. Both are now avoided; the maths is otherwise
+    // unchanged, and the wide/global path is still exact.
+    if (cLat != _pjCLat || cLon != _pjCLon || radiusKm != _pjRadiusKm)
+        updateProjCache(cLat, cLon, radiusKm);
 
-    float sinp0 = sinf(p0), cosp0 = cosf(p0);
+    const float RAD = (float)M_PI / 180.0f;
+    float p  = lat * RAD;
+    float dl = (lon - cLon) * RAD;
+
     float sinp  = sinf(p),  cosp  = cosf(p);
     float cosdl = cosf(dl), sindl = sinf(dl);
 
-    float cosc = sinp0 * sinp + cosp0 * cosp * cosdl;   // cos(angular distance)
+    float cosc = _pjSinLat0 * sinp + _pjCosLat0 * cosp * cosdl;   // cos(angular distance)
     if (cosc >  1.0f) cosc =  1.0f;
     if (cosc < -1.0f) cosc = -1.0f;
-    float c = acosf(cosc);
-    float k = (c < 1e-6f) ? 1.0f : c / sinf(c);         // → 1 as c → 0
+
+    // k = c/sin(c), where c = acos(cosc). Expanding about c=0 gives
+    // k ≈ 1 + c²/6, and c² ≈ 2(1-cosc) to the same order, hence 1 + (1-cosc)/3.
+    // At cosc = 0.99 (c ≈ 8.1°, ~900 km from centre — beyond the widest zoom
+    // step) the series and the exact value agree to six decimal places, i.e.
+    // far under a pixel. Only genuinely wide views pay for acosf/sinf.
+    float k;
+    if (cosc > 0.99f) k = 1.0f + (1.0f - cosc) * (1.0f / 3.0f);
+    else              { float c = acosf(cosc); k = c / sinf(c); }
 
     float east  = k * cosp * sindl;
-    float north = k * (cosp0 * sinp - sinp0 * cosp * cosdl);
-    float dx = EARTH_R * east;                          // km east / north of centre
-    float dy = EARTH_R * north;
+    float north = k * (_pjCosLat0 * sinp - _pjSinLat0 * cosp * cosdl);
 
-    sx = CX + (int)((dx / radiusKm) * PLOT_R);
-    sy = CY - (int)((dy / radiusKm) * PLOT_R);          // screen Y is inverted
+    sx = CX + (int)(east  * _pjPxPerRad);
+    sy = CY - (int)(north * _pjPxPerRad);   // screen Y is inverted
 }
 
 // Shared dead-reckoning math: advance (lat0,lon0) along headingDeg at speedMs
@@ -361,7 +391,7 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
         if (_following && i == selectedIdx) drawFollowInfo(ac, sx, sy);
     }
 
-    drawPollIcon(lastUpdateMs, fetching);
+    drawPollIcon(fetching);
 
     if (_showStatus) {
         drawApiStatusOverlay();          // status panel takes precedence
@@ -577,27 +607,67 @@ void RadarDisplay::drawLoFiMap(float cLat, float cLon, float radiusKm) {
     // city labels just become clutter that far out, leaving coastlines + borders.
     bool wide = radiusKm > 1500.0f;
 
+    // Rivers and lakes are by far the densest layer — many short polylines, so
+    // the per-line bounding-box test rejects few of them and the cost scales
+    // with view area. They also stop reading as anything but noise once a single
+    // pixel is a couple of km. Dropping them past the 100 km zoom step keeps the
+    // two widest steps cheap, which is where the frame time was worst; coastlines,
+    // borders, cities and airports (the actually useful landmarks) all stay.
+    bool dropWater = radiusKm > 150.0f;
+
     // ── Lines ──
     const uint8_t* p = lofi::linesBegin();
     lofi::Line L;
     for (uint32_t i = 0; i < lofi::lineCount(); ++i) {
         p = lofi::readLine(p, L);
-        if (wide && L.layer == lofi::LAYER_WATER) continue;   // skip water when zoomed way out
+        if (dropWater && L.layer == lofi::LAYER_WATER) continue;   // see dropWater above
         if (L.maxLon * u < vMinLon || L.minLon * u > vMaxLon ||
             L.maxLat * u < vMinLat || L.minLat * u > vMaxLat) continue;   // cull
 
         uint16_t col = (L.layer == lofi::LAYER_COAST)  ? COL_RING_LBL
                      : (L.layer == lofi::LAYER_BORDER) ? COL_GND
                                                        : COL_RING;   // water
-        int px = 0, py = 0;
-        bool have = false;
+        // The bounding-box test above only rejects lines that miss the view
+        // entirely. A long polyline (a whole national coastline is one record)
+        // usually *overlaps* the view while lying almost entirely outside it, and
+        // every one of those far-away vertices used to cost a full projection
+        // plus a drawLine that clipped away to nothing. That is what made wide
+        // zooms crawl, since bbox culling stops helping as the view grows.
+        //
+        // So: give each point a Cohen-Sutherland outcode against the (already
+        // margined) view box — four float compares, no trig — and skip any
+        // segment whose endpoints both lie beyond the same edge, as such a
+        // segment cannot cross the view. Points are then projected lazily, only
+        // when a segment actually survives. Segments that might be visible are
+        // drawn exactly as before, so the picture is unchanged.
+        int   prevOut = 0;
+        float prevLon = 0.0f, prevLat = 0.0f;
+        int   px = 0, py = 0;
+        bool  havePrev = false, prevProjected = false;
+
         for (uint16_t k = 0; k < L.nPts; ++k) {
             float lon, lat;
             lofi::linePoint(L, k, lon, lat);
-            int sx, sy;
-            worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
-            if (have) _g->drawLine(px, py, sx, sy, col);   // sprite clips off-screen
-            px = sx; py = sy; have = true;
+
+            int out = 0;
+            if      (lon < vMinLon) out |= 1;
+            else if (lon > vMaxLon) out |= 2;
+            if      (lat < vMinLat) out |= 4;
+            else if (lat > vMaxLat) out |= 8;
+
+            if (havePrev && (out & prevOut) == 0) {
+                if (!prevProjected)
+                    worldToScreen(prevLat, prevLon, cLat, cLon, radiusKm, px, py);
+                int sx, sy;
+                worldToScreen(lat, lon, cLat, cLon, radiusKm, sx, sy);
+                _g->drawLine(px, py, sx, sy, col);   // sprite clips off-screen
+                px = sx; py = sy;
+                prevProjected = true;
+            } else {
+                prevProjected = false;   // px,py no longer match the previous point
+            }
+
+            prevLon = lon; prevLat = lat; prevOut = out; havePrev = true;
         }
     }
 
@@ -1152,7 +1222,7 @@ void RadarDisplay::flashEmergencyRing() {
     }
 }
 
-void RadarDisplay::drawPollIcon(unsigned long lastUpdateMs, bool fetching) {
+void RadarDisplay::drawPollIcon(bool fetching) {
     auto& d = *_g;
 
     // Dim track — full circle
@@ -1172,8 +1242,11 @@ void RadarDisplay::drawPollIcon(unsigned long lastUpdateMs, bool fetching) {
     }
 
     // Otherwise, bright arc shrinks from full circle down to nothing as the
-    // next poll approaches
-    unsigned long elapsed = millis() - lastUpdateMs;
+    // next poll approaches. Measured from when the last fetch was *dispatched*
+    // (see setPollAnchor()), which is what the scheduler counts the interval
+    // from — so the arc now empties exactly as the next poll fires, instead of
+    // running out early by however long the previous fetch took.
+    unsigned long elapsed = millis() - _pollAnchorMs;
     float fraction = (float)elapsed / (float)refreshIntervalMs();
     if (fraction > 1.0f) fraction = 1.0f;
     float remaining = 1.0f - fraction;

@@ -84,6 +84,15 @@ static const unsigned long ENC_MIN_STEP_MS = 25UL;
 // level while the user spins through several in a row.
 static const unsigned long ZOOM_FETCH_DEBOUNCE_MS = 350UL;
 
+// How often the radar repaints while traffic is moving, i.e. the dead-reckoning
+// animation's frame interval. 200 ms = 5 fps, which is what makes marks glide
+// rather than step. Measure a real frame with the `PERF` serial command before
+// lowering this: a full composite runs ~23 ms close in and ~33 ms at the 400 km
+// step, so 5 fps is comfortably under a fifth of the loop's time. Everything
+// else the UI does (touch, encoder) is sampled between frames, so pushing this
+// too low would start eating the input-sampling gaps.
+static const unsigned long ANIM_FRAME_MS = 200UL;
+
 // Drop the aircraft set entirely if no fetch has succeeded for this long. A
 // failed fetch deliberately keeps the last good data on screen (a transient
 // blip shouldn't blank the radar), but past the dead-reckoning cap those marks

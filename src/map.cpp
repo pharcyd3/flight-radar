@@ -109,14 +109,19 @@ static bool fetchTileToFile(WiFiClientSecure& client, HTTPClient& http,
 // ── Compose / cache ───────────────────────────────────────────────────────────
 
 bool MapLayer::compose(float lat, float lon, float r) {
-    // Don't start a second heap-hungry TLS session while a flight-data fetch
-    // is already using one — this used to be guarded only for the idle
-    // precache path (feed::busy() gates maybePrecacheMaps() in main.cpp), not
-    // for a live compose triggered by zooming into fresh, uncached territory.
-    // Bail and let the caller retry next frame: ensure()/beginScene() leave
-    // _haveMap false on a false return, so the very next call re-attempts
-    // this instead of getting stuck.
-    if (feed::busy()) return false;
+    // Don't start a second heap-hungry TLS session while a flight-data fetch is
+    // already using one. Wait for it rather than giving up: returning false here
+    // leaves _haveMap false, so the view falls back to a bare background and the
+    // next frame retries — which at a brisk refresh interval can mean a visible
+    // "loading map..." flicker loop before a compose ever wins a free window. A
+    // poll is only ~1-2 s, and this path is already a multi-second blocking
+    // network operation, so waiting it out is both quicker and steadier. Bounded
+    // so a wedged fetch can't hang the compose indefinitely.
+    unsigned long waitStart = millis();
+    while (feed::busy() && millis() - waitStart < 3000UL) {
+        watchdogFeed();
+        delay(25);
+    }
 
     // Make sure the PNG decoder is allocated (it's freed between precache rounds
     // to give flight-data polls headroom). If it can't be re-primed on this heap the

@@ -15,13 +15,25 @@ public:
               float centerLat, float centerLon, float radiusKm, int zoomIdx,
               int selectedIdx, unsigned long lastUpdateMs, bool fetching);
 
+    // When the *current* polling interval started — i.e. when the last fetch was
+    // dispatched, not when its response came back. The poll icon's countdown is
+    // measured from this.
+    //
+    // Those two instants differ by however long the fetch took (typically 1-2 s),
+    // and anchoring the countdown to the arrival time made the arc drain early:
+    // it hit empty a whole fetch-duration before the next poll actually fired, so
+    // the ring visibly "reset" with a chunk of arc still showing. Most obvious at
+    // the 5 s refresh setting, where a 1.5 s fetch is 30% of the interval. Set
+    // from the fetch scheduler in main.cpp, which owns this timer.
+    void setPollAnchor(unsigned long dispatchedMs) { _pollAnchorMs = dispatchedMs; }
+
     // Redraws just the poll icon (its countdown arc ticks every second) —
     // used for the periodic 1 Hz refresh instead of a full draw() so the
     // map/rings/aircraft aren't needlessly re-pushed (and re-flickered) when
     // nothing about them has actually changed.
-    void updatePollIcon(unsigned long lastUpdateMs, bool fetching) {
+    void updatePollIcon(bool fetching) {
         _g = &M5Dial.Display;   // partial overlay — paint straight onto the display
-        drawPollIcon(lastUpdateMs, fetching);
+        drawPollIcon(fetching);
         // Repaint the battery gauge on this path too. Otherwise, with nothing
         // moving on screen, no full frame is composited and plugging in the
         // charger wouldn't show until something else forced a redraw. Both are
@@ -235,7 +247,7 @@ private:
     // is a moving aircraft and "set home here" would mean nothing.
     void drawSetHomeIcon();
     void drawSignalLostNotice();
-    void drawPollIcon(unsigned long lastUpdateMs, bool fetching);
+    void drawPollIcon(bool fetching);
     void drawApiStatusOverlay();
 
     // Current render target: the map sprite while compositing a full frame (so it
@@ -246,7 +258,27 @@ private:
 
     // millis() timestamp of the last fetch, captured at the top of draw() — the
     // time base dead-reckoning interpolation measures elapsed movement from.
+    // This is when the data *arrived*, which is what interpolation needs; the
+    // poll icon deliberately uses _pollAnchorMs instead (see setPollAnchor()).
     unsigned long _fetchMs = 0;
+
+    // See setPollAnchor(). Kept separate from _fetchMs on purpose.
+    unsigned long _pollAnchorMs = 0;
+
+    // ── Projection cache ────────────────────────────────────────────────────────
+    // worldToScreen() is the hottest routine in a frame — the lo-fi vector map
+    // alone calls it once per polyline vertex. sin/cos of the *centre* latitude
+    // and the radians→pixels scale are identical for every point in a frame, so
+    // they're computed once when the view parameters actually change rather than
+    // recomputed per call. Keyed on the view triple so correctness doesn't depend
+    // on callers remembering to invalidate anything.
+    float _pjCLat      = 1e9f;    // deliberately impossible → first call populates
+    float _pjCLon      = 1e9f;
+    float _pjRadiusKm  = -1.0f;
+    float _pjSinLat0   = 0.0f;
+    float _pjCosLat0   = 1.0f;
+    float _pjPxPerRad  = 0.0f;
+    void  updateProjCache(float centerLat, float centerLon, float radiusKm);
 
     // Follow-mode context (set by setFollow()). When active, the view is centred
     // on the tracked aircraft and home is drawn at _homeMark* instead.

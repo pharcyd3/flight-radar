@@ -762,7 +762,7 @@ void runSettings(RadarDisplay& radar, const std::vector<Aircraft>& aircraft,
         unsigned long now = millis();
         if (now - lastTickMs >= 1000UL) {
             lastTickMs = now;
-            radar.updatePollIcon(lastUpdateMs, fetching);
+            radar.updatePollIcon(fetching);
         }
 
         // Auto-exit after 30 s of no interaction

@@ -434,6 +434,11 @@ static void startFetch() {
     // idempotent — a later compose just re-primes it on demand.
     mapLayer.releaseDecoder();
 
+    // Start the poll icon's countdown from here — the moment the request goes
+    // out, which is exactly what the scheduler above measures refreshIntervalMs()
+    // from. (It used to count from the *response*, so the arc drained early.)
+    radar.setPollAnchor(millis());
+
     // While following, name the tracked aircraft so it survives the
     // MAX_AIRCRAFT cap even in dense airspace (see adsblive.h).
     feed::request(viewLat(), viewLon(), displayRadiusKm(),
@@ -899,26 +904,32 @@ void loop() {
         }
     }
 
-    // ── Periodic redraw (1 Hz — keeps the poll icon's countdown ticking) ─────
-    // Only the poll icon (and, if open, the status overlay) needs to animate
-    // every second; re-running a full draw() here would re-push the whole
-    // map sprite every tick for no reason, which is what was causing the
-    // rings/labels to visibly flicker. The aircraft detail panel has no live
-    // timer of its own, so it needs no periodic redraw at all — only a new
-    // fetch or touch event changes it, both already handled elsewhere.
+    // ── Animation frame ────────────────────────────────────────────────────────
     // Dead-reckoning animation: if anything airborne is moving, its mark has
     // drifted since the last frame, so repaint the whole radar to let it glide
     // between polls. draw() composites into one sprite and pushes it in a single
-    // transfer, so this full redraw is flicker-free. While following we redraw a
-    // little faster and always, to keep the tracked aircraft smoothly centred.
-    // Otherwise, when nothing's moving, just tick the poll-icon countdown.
+    // transfer, so this full redraw is flicker-free. When nothing's moving, just
+    // tick the poll-icon countdown (and the status panel's "Ns ago" line) rather
+    // than re-pushing an identical frame.
+    //
+    // This used to run at 1 Hz (0.5 Hz-ish while following), which is well below
+    // what the hardware can do and is why traffic appeared to jump once a second
+    // instead of gliding. A measured full composite is ~23 ms at close zoom and
+    // ~33 ms at the 400 km step (device `PERF` command), so 5 fps costs well
+    // under a fifth of the loop and leaves the input sampling plenty of gaps.
+    //
+    // The moving-aircraft scan also used to be skipped while a fetch was in
+    // flight, which froze the animation outright for the 1-2 s each poll takes —
+    // at the 5 s refresh setting that's a third of the time. Nothing here shares
+    // state with the fetch (it parses into its own buffer on the other core, and
+    // the swap into `aircraft` happens in collectFetch() on this thread), so the
+    // frame can keep running throughout.
     static unsigned long lastDrawMs = 0;
-    unsigned long drawInterval = following ? 500UL : 1000UL;
-    if (now - lastDrawMs >= drawInterval) {
+    if (now - lastDrawMs >= ANIM_FRAME_MS) {
         lastDrawMs = now;
 
         bool anyMoving = following;
-        if (!anyMoving && !feed::busy() && !radar.statusVisible()) {
+        if (!anyMoving && !radar.statusVisible()) {
             for (const Aircraft& ac : aircraft)
                 if (!ac.onGround && ac.speedMs >= INTERP_MIN_SPEED_MS) { anyMoving = true; break; }
         }
@@ -926,7 +937,7 @@ void loop() {
         if (anyMoving) {
             redraw();
         } else {
-            radar.updatePollIcon(lastUpdateMs, feed::busy());
+            radar.updatePollIcon(feed::busy());
             radar.updateStatusOverlay();
         }
     }
