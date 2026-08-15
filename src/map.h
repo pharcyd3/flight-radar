@@ -78,11 +78,20 @@ public:
     // ensureDecoder(). No-op if already released.
     void releaseDecoder();
 
+    // True once a decoder allocation has failed. The PNG decoder needs a single
+    // contiguous ~45 KB block, and once WiFi is up the largest free block on
+    // this no-PSRAM board sits around 35-40 KB however little else is running —
+    // so Map -> Full cannot compose new territory and falls back to the offline
+    // vector map. Exposed so the UI can say so rather than leave the user
+    // staring at the wrong map wondering why.
+    bool decoderUnavailable() const { return _decoderUnavailable; }
+
 private:
     LGFX_Sprite _spr{&M5Dial.Display};
     bool  _ready        = false;
     bool  _haveMap      = false;
     bool  _decoderReady = false;   // is the pngle scratch buffer currently allocated?
+    bool  _decoderUnavailable = false;  // a prime has failed; see decoderUnavailable()
     bool  _sceneDirty   = false;   // has the sprite been overdrawn since the last clean map load?
     bool  _composeComplete = false;  // did the last compose() fetch every tile (safe to cache)?
     float _curLat = 999.0f, _curLon = 999.0f, _curR = -1.0f;
@@ -91,6 +100,7 @@ private:
     void saveCache(float lat, float lon, float r);
     bool compose(float lat, float lon, float r);   // fetch + decode tiles
     bool ensureDecoder();                          // (re)prime the pngle buffer if freed
+
 };
 
 extern MapLayer mapLayer;

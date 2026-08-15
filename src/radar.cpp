@@ -310,6 +310,12 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     // as "Full is broken" rather than "Full is waiting".
     if ((_following || _viewMoving) && mm == MAP_FULL) mm = MAP_LOFI;
 
+    // Full was asked for but the decoder can't be allocated (see
+    // MapLayer::decoderUnavailable()). Fall back rather than show nothing, and
+    // note it so the user isn't left wondering why the street map never arrives.
+    bool fullUnavailable = (mm == MAP_FULL && mapLayer.decoderUnavailable());
+    if (fullUnavailable) mm = MAP_LOFI;
+
     if (mm == MAP_FULL) {
         // beginScene() leaves the pristine map background in the sprite (loading
         // or restoring as needed); false means no map available → solid fill.
@@ -326,6 +332,12 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     _g->setTextDatum(MC_DATUM);
     drawRings(radiusKm);
     drawZoomDots(zoomIdx);
+    if (fullUnavailable) {
+        _g->setTextDatum(MC_DATUM);
+        _g->setTextSize(1);
+        _g->setTextColor(COL_STATUS, COL_BG);
+        _g->drawString("street map unavailable (memory)", CX, CY + PLOT_R + 12);
+    }
     pollBattery();
     drawBatteryGauge();
 

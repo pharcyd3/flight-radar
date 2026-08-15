@@ -123,10 +123,19 @@ bool MapLayer::compose(float lat, float lon, float r) {
         delay(25);
     }
 
-    // Make sure the PNG decoder is allocated (it's freed between precache rounds
-    // to give flight-data polls headroom). If it can't be re-primed on this heap the
-    // tiles can't be decoded, so bail — the radar falls back to a solid bg.
+    // Check the decoder can be had *before* touching the network. Without this
+    // we fetch nine tiles over TLS only to discover nothing can decode them, and
+    // repeat that on every frame — which drags the whole UI down to ~1 Hz.
+    // ensureDecoder() rate-limits its own retries, so this is cheap once it has
+    // failed.
     if (!ensureDecoder()) return false;
+
+    // Having proved it's available, let it go again: the decoder needs ~45 KB and
+    // a TLS session ~40 KB, and this board cannot hold both — keeping it while
+    // opening a connection fails the handshake outright with "SSL - Memory
+    // allocation failed". They're only used one after the other (fetch a tile to
+    // flash, then decode it back), so each tile below claims one at a time.
+    releaseDecoder();
 
     double mpp;
     int    z = chooseZoom(lat, r, TARGET_PX, mpp);
@@ -184,6 +193,9 @@ bool MapLayer::compose(float lat, float lon, float r) {
             // cached. A fresh connection + short backoff between attempts recovers
             // the transient failures (network blips, OSM rate-limiting, a starved
             // TLS handshake) that were causing the black patches.
+            // Fetch phase: the decoder must be out of the way or the TLS
+            // handshake has nothing to allocate from.
+            releaseDecoder();
             bool fetched = false;
             for (int attempt = 0; attempt < 3 && !fetched; attempt++) {
                 if (attempt > 0) { client.stop(); delay(250); }
@@ -191,6 +203,13 @@ bool MapLayer::compose(float lat, float lon, float r) {
                 fetched = fetchTileToFile(client, http, z, wtx, wty, TILE_TMP_PATH);
             }
             if (!fetched) { fail++; continue; }
+
+            // Decode phase: close the connection first so its buffers are back
+            // before we ask for the decoder's 45 KB. Costs a handshake per tile,
+            // which is why setReuse() exists — but a slow compose beats one that
+            // cannot happen at all.
+            client.stop();
+            if (!ensureDecoder()) { fail++; continue; }
 
             int sx = (int)lround((tx * 256.0 - homeAbsX) * s + TARGET_PX / 2);
             int sy = (int)lround((ty * 256.0 - homeAbsY) * s + TARGET_PX / 2);
@@ -337,10 +356,33 @@ void MapLayer::begin() {
 // contiguous block is available even though a poll couldn't spare it.
 bool MapLayer::ensureDecoder() {
     if (_decoderReady) return true;
+
+    // Back off after a failure. The decoder needs one contiguous ~45 KB block;
+    // once the heap has settled with the feed and web server up, the largest
+    // free block is nearer 34 KB and no amount of retrying will conjure one.
+    // Without this the caller re-attempts every frame — tens of times a second,
+    // indefinitely — burning CPU and filling the log to no purpose. Retrying
+    // occasionally is still worth it, since freeing a large allocation
+    // elsewhere can genuinely open a window.
+    static unsigned long nextTryMs = 0;
+    unsigned long now = millis();
+    if (nextTryMs && now < nextTryMs) return false;
+
     unsigned before = ESP.getFreeHeap();
     _decoderReady = _spr.drawPng(PRIME_PNG, sizeof(PRIME_PNG), 0, 0);
-    Serial.printf("[Map] png decoder re-prime: %s (heap %u -> %u)\n",
-                  _decoderReady ? "ok" : "FAILED", before, ESP.getFreeHeap());
+    if (_decoderReady) {
+        nextTryMs = 0;
+        _decoderUnavailable = false;
+        Serial.printf("[Map] png decoder re-prime: ok (heap %u -> %u)\n",
+                      before, ESP.getFreeHeap());
+    } else {
+        nextTryMs = now + 30000UL;
+        _decoderUnavailable = true;
+        Serial.printf("[Map] png decoder re-prime FAILED: need ~45 KB contiguous, "
+                      "largest free block %u (heap %u). Retrying in 30 s; the "
+                      "offline map is used meanwhile.\n",
+                      ESP.getMaxAllocHeap(), before);
+    }
     return _decoderReady;
 }
 
