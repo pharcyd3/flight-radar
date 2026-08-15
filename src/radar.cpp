@@ -298,13 +298,17 @@ void RadarDisplay::draw(const std::vector<Aircraft>& aircraft,
     _g = useSprite ? (LovyanGFX*)mapLayer.sprite() : &M5Dial.Display;
 
     int mm = mapMode();
-    // Never use the raster map while the view is moving — following a plane or
-    // being dragged around. It would recompose ("loading map...") every time the
-    // centre crosses into new tiles, which blocks the UI for seconds at a time
-    // and competes with the flight-data fetch for the scarce heap the HTTPS
-    // handshake needs. The offline vector map re-centres instantly and covers
-    // the whole world, so free browsing stays smooth.
-    if ((_following || _viewPanned) && mm == MAP_FULL) mm = MAP_LOFI;
+    // Suppress the raster map only while the view is genuinely in motion —
+    // following a plane, or mid-drag. Composing tiles blocks the UI for seconds
+    // and competes with the flight-data fetch for the contiguous heap the TLS
+    // handshake needs, so doing it on every frame of a drag is hopeless.
+    //
+    // This deliberately does NOT key off _viewPanned. Being parked somewhere
+    // away from home is a perfectly good time to load the street map, and
+    // suppressing it for the whole browse session meant anyone who dragged even
+    // slightly got the lo-fi map from then on with no explanation — which reads
+    // as "Full is broken" rather than "Full is waiting".
+    if ((_following || _viewMoving) && mm == MAP_FULL) mm = MAP_LOFI;
 
     if (mm == MAP_FULL) {
         // beginScene() leaves the pristine map background in the sprite (loading

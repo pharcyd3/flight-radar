@@ -85,6 +85,11 @@ public:
     // either mode — drives the recentre icon.
     void setViewPanned(bool panned) { _viewPanned = panned; }
 
+    // True only while the view is actually *in motion* (mid-drag, or just
+    // after). Distinct from setViewPanned(): being parked somewhere away from
+    // home is fine for the raster map, but moving while it composes is not.
+    void setViewMoving(bool moving) { _viewMoving = moving; }
+
     // True when a tap lands on the recentre icon.
     bool hitRecenterIcon(int tx, int ty) const;
 
@@ -291,6 +296,7 @@ private:
     float _followTargetLon  = 0.0f;   // reticle when the view is panned away from it
     bool  _showRecenter     = false;  // true when the view is panned off centre
     bool  _viewPanned       = false;  // set by main.cpp; pan applies in both modes
+    bool  _viewMoving       = false;  // mid-drag; suppresses the raster map
     bool  _followLost       = false;
     unsigned long _followLostSecs = 0;
 

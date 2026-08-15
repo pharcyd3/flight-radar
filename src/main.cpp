@@ -108,6 +108,11 @@ static bool followTouchOnButton = false, followTouchDragged = false;
 // see Iceland's traffic. Home stays exactly where it is; it's just drawn as an
 // offset marker until you recentre.
 static bool  browsing  = false;
+// Set while dragging and for a short settle afterwards. The raster map is
+// suppressed during this window only, so a drag stays smooth but stopping
+// somewhere lets the street map compose for wherever you landed.
+static unsigned long viewMovingUntilMs = 0;
+static const unsigned long VIEW_SETTLE_MS = 700;
 static float browseLat = 0.0f;
 static float browseLon = 0.0f;
 
@@ -152,6 +157,7 @@ static void browsePan(int dxPx, int dyPx) {
     float kmPerPx = displayRadiusKm() / 105.0f;   // PLOT_R
     float cl = cosf(browseLat * (float)M_PI / 180.0f);
     if (cl < 0.05f) cl = 0.05f;                   // don't divide away near the poles
+    viewMovingUntilMs = millis() + VIEW_SETTLE_MS;
     browseLat += (dyPx * kmPerPx) / 111.0f;
     browseLon -= (dxPx * kmPerPx) / (111.0f * cl);
     if (browseLat >  85.0f) browseLat =  85.0f;
@@ -175,6 +181,7 @@ static void redraw() {
     radar.setFollow(following, homeLat(), homeLon(), followLabel(), followHideOthers,
                     followCenterLat, followCenterLon);
     radar.setViewPanned(browsing || followPanPxX != 0 || followPanPxY != 0);
+    radar.setViewMoving(millis() < viewMovingUntilMs);
     // Tell the chase view when the target has been unseen long enough to be
     // worth saying so, rather than leaving a coasting mark looking like a hang.
     unsigned long lostMs = following ? (millis() - followLastSeenMs) : 0;
